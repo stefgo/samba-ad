@@ -6,11 +6,11 @@ services:
     container_name: samba-dc
     restart: unless-stopped
     network_mode: host
-    # Samba speichert NT-ACLs (u. a. für sysvol) in security.*-xattrs
+    # Samba stores NT ACLs (e.g. for sysvol) in security.* xattrs
     cap_add:
       - SYS_ADMIN
-    # Normaler Betrieb: der DC ist sein eigener DNS-Server.
-    # init.sh setzt SAMBA_DNS_SERVER beim Join auf den Peer.
+    # Normal operation: the DC is its own DNS server.
+    # init.sh points SAMBA_DNS_SERVER to the peer during a join.
     dns:
       - ${SAMBA_DNS_SERVER:-${SAMBA_HOST_ADDRESS}}
     dns_search:

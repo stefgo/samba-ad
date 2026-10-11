@@ -1,111 +1,113 @@
 # samba-ad
 
-Samba Active Directory Domain Controller als Docker-Container, mit BIND 9 als
-DNS-Backend (`BIND9_DLZ`). Basis ist Debian trixie; Samba kommt aus
-trixie-backports (4.24).
+Samba Active Directory domain controller as a Docker container, using BIND 9
+as DNS backend (`BIND9_DLZ`). The image is based on Debian trixie; Samba is
+installed from trixie-backports (4.24).
 
-## Voraussetzungen
+## Requirements
 
-- Linux-Host mit Docker und dem Compose-Plugin
-- Der Container läuft mit `network_mode: host`. Auf dem Host dürfen die
-  Ports von DNS (53), Kerberos (88, 464), LDAP (389, 636, 3268, 3269) und
-  SMB (135, 139, 445) nicht belegt sein.
-- Der Kurzname des Hosts wird zum NetBIOS-Namen des Domain Controllers.
-- Der Container erhält die Capability `SYS_ADMIN`. Samba speichert NT-ACLs in
-  `security.*`-xattrs; ohne diese Capability schlägt das Provisioning beim
-  Setzen der Sysvol-ACLs fehl.
+- Linux host with Docker and the Compose plugin
+- The container runs with `network_mode: host`. The ports for DNS (53),
+  Kerberos (88, 464), LDAP (389, 636, 3268, 3269) and SMB (135, 139, 445)
+  must be free on the host.
+- The short hostname of the host becomes the NetBIOS name of the domain
+  controller.
+- The container is granted the `SYS_ADMIN` capability. Samba stores NT ACLs
+  in `security.*` xattrs; without this capability provisioning fails while
+  setting the sysvol ACLs.
 
-## Konfiguration
+## Configuration
 
 ```sh
 cp .env.example .env
 ```
 
-| Variable | Bedeutung |
+| Variable | Meaning |
 |---|---|
-| `SAMBA_HOST_NAME` | Kurzname des Docker-Hosts |
-| `SAMBA_HOST_ADDRESS` | IP-Adresse des Hosts; BIND lauscht darauf, im Betrieb DNS-Server des Containers |
-| `SAMBA_REALM` | Kerberos-Realm / DNS-Domäne, z. B. `EXAMPLE.LAN` |
-| `WORKGROUP` | NetBIOS-Domänenname, z. B. `EXAMPLE` |
-| `SAMBA_PEER_SERVER` | Bestehender DC, nur für den Join nötig |
-| `SAMBA_INTERFACE` | Schnittstellen, an die Samba bindet |
-| `SAMBA_DNS_FORWARDER` | Optional: Forwarder für externe Namen (leerzeichengetrennt) |
-| `TZ` | Zeitzone, Vorgabe `UTC` |
+| `SAMBA_HOST_NAME` | Short name of the Docker host |
+| `SAMBA_HOST_ADDRESS` | IP address of the host; BIND listens on it, and it is the container's DNS server during normal operation |
+| `SAMBA_REALM` | Kerberos realm / DNS domain, e.g. `EXAMPLE.LAN` |
+| `WORKGROUP` | NetBIOS domain name, e.g. `EXAMPLE` |
+| `SAMBA_PEER_SERVER` | Existing DC, only required for a join |
+| `SAMBA_INTERFACE` | Interfaces Samba binds to |
+| `SAMBA_DNS_FORWARDER` | Optional: forwarders for external names (space-separated) |
+| `TZ` | Time zone, defaults to `UTC` |
 
-Die `.env` enthält standortspezifische Werte und wird nicht eingecheckt.
+The `.env` file holds site-specific values and is not committed.
 
 ## Image
 
-GitHub Actions baut das Image für `linux/amd64` und `linux/arm64` und legt es
-in der GitHub Container Registry ab: bei Änderungen unter `docker/`, jeden
-Montag (damit Debian- und Samba-Updates ins Image kommen) und auf Wunsch
-manuell über "Run workflow".
+GitHub Actions builds the image for `linux/amd64` and `linux/arm64` and
+publishes it to the GitHub Container Registry: on changes below `docker/`,
+every Monday (to pick up Debian and Samba updates) and on demand via
+"Run workflow".
 
-| Tag | Inhalt |
+| Tag | Content |
 |---|---|
-| `latest` | Aktueller Stand |
-| `JJJJMMTT` | Stand eines bestimmten Bautags, z. B. für ein Rollback |
+| `latest` | Current build |
+| `YYYYMMDD` | Build of a specific day, e.g. for a rollback |
 
-`compose.yaml` verwendet `ghcr.io/stefgo/samba-ad:latest`. Das
-Paket ist privat, der Docker-Host muss sich daher einmalig mit einem Personal
-Access Token (Recht `read:packages`) anmelden:
+`compose.yaml` uses `ghcr.io/stefgo/samba-ad:latest`. The package is private,
+so the Docker host has to log in once with a personal access token
+(`read:packages` scope):
 
 ```sh
 docker login ghcr.io -u stefgo
 docker compose pull
 ```
 
-Alternativ baut `docker compose build` das Image lokal unter demselben Namen.
+Alternatively, `docker compose build` builds the image locally under the same
+name.
 
-## Betriebsarten
+## Modes of operation
 
-| Aufruf | Zweck | DNS-Server des Containers |
+| Command | Purpose | DNS server of the container |
 |---|---|---|
-| `./init.sh provision` | Neue Domäne vollständig initialisieren | `SAMBA_HOST_ADDRESS` |
-| `./init.sh join` | Initialisieren und einer bestehenden Domäne beitreten | `SAMBA_PEER_SERVER` |
-| `docker compose up -d` | Bestehende Installation starten | `SAMBA_HOST_ADDRESS` |
+| `./init.sh provision` | Fully initialize a new domain | `SAMBA_HOST_ADDRESS` |
+| `./init.sh join` | Initialize and join an existing domain | `SAMBA_PEER_SERVER` |
+| `docker compose up -d` | Start an existing installation | `SAMBA_HOST_ADDRESS` |
 
-`init.sh` **löscht nach einer Sicherheitsabfrage die Volumes** `samba-dc-etc`,
-`samba-dc-lib` und `samba-dc-bind` und fragt anschließend das Passwort des
-Domänen-Administrators ab. Bei `provision` wird es neu vergeben, bei `join`
-ist es das Passwort der bestehenden Domäne.
+`init.sh` **deletes the volumes** `samba-dc-etc`, `samba-dc-lib` and
+`samba-dc-bind` after a confirmation prompt and then asks for the password of
+the domain administrator. With `provision` the password is newly set, with
+`join` it is the password of the existing domain.
 
-Nach der Initialisierung wird der Domain Controller gestartet mit:
+After initialization, start the domain controller with:
 
 ```sh
 docker compose up -d
 ```
 
-## Betrieb
+## Operation
 
 ```sh
-docker compose logs -f                          # Logs von BIND und Samba
+docker compose logs -f                          # logs of BIND and Samba
 docker compose exec samba-dc samba-tool drs showrepl
 docker compose exec samba-dc samba-tool dbcheck
-docker compose pull && docker compose up -d      # Image aktualisieren
+docker compose pull && docker compose up -d      # update the image
 ```
 
-Ein Update auf eine neuere Samba-Version ist mit bestehenden Volumes
-möglich, der Weg zurück auf eine ältere Version nicht.
+Updating to a newer Samba version works with existing volumes; going back to
+an older version does not.
 
-## Aufbau
+## Layout
 
-| Pfad | Inhalt |
+| Path | Content |
 |---|---|
-| `compose.yaml` | Service-Definition und Volumes |
-| `init.sh` | Initialisierung (`provision` / `join`) |
-| `.github/workflows/build.yml` | Bau und Bereitstellung des Images |
-| `docker/Dockerfile` | Image mit Samba, BIND und supervisord |
-| `docker/entrypoint.sh` | Initialisierung und Erzeugen der Konfiguration beim Start |
-| `docker/*.j2` | Vorlagen für `named.conf` und `smb.conf` |
+| `compose.yaml` | Service definition and volumes |
+| `init.sh` | Initialization (`provision` / `join`) |
+| `.github/workflows/build.yml` | Builds and publishes the image |
+| `docker/Dockerfile` | Image with Samba, BIND and supervisord |
+| `docker/entrypoint.sh` | Initialization and config generation at startup |
+| `docker/*.j2` | Templates for `named.conf` and `smb.conf` |
 
-`smb.conf` und `named.conf` werden bei jedem Start aus den Vorlagen neu
-erzeugt. Eigene Samba-Einstellungen gehören als `*.conf` nach
-`/etc/samba/conf.d` im Volume `samba-dc-etc`.
+`smb.conf` and `named.conf` are regenerated from the templates on every
+start. Custom Samba settings belong in `*.conf` files below
+`/etc/samba/conf.d` in the `samba-dc-etc` volume.
 
-## Hinweise
+## Notes
 
-- `named.conf` enthält `allow-update { any; }`. Die AD-Zonen werden über das
-  DLZ-Modul von Samba verwaltet (`allow dns updates = secure`); wer weitere
-  Zonen in BIND einrichtet, sollte die Option einschränken.
-- Samba verwendet für BIND 9.20 das DLZ-Modul `dlz_bind9_18.so`.
+- `named.conf` contains `allow-update { any; }`. The AD zones are managed by
+  Samba's DLZ module (`allow dns updates = secure`); restrict the option if
+  you add further zones to BIND.
+- Samba uses the DLZ module `dlz_bind9_18.so` for BIND 9.20 as well.

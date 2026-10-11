@@ -5,14 +5,13 @@ cd "$(dirname "$0")"
 
 usage() {
   cat <<EOF
-Aufruf: $0 provision|join
+Usage: $0 provision|join
 
-  provision  Neue Domäne vollständig initialisieren
-  join       Installation initialisieren und einer bestehenden Domäne
-             beitreten (SAMBA_PEER_SERVER dient als DNS-Server)
+  provision  Fully initialize a new domain
+  join       Initialize the installation and join an existing domain
+             (SAMBA_PEER_SERVER is used as DNS server)
 
-Eine bereits initialisierte Installation wird mit "docker compose up -d"
-gestartet.
+An already initialized installation is started with "docker compose up -d".
 EOF
 }
 
@@ -27,29 +26,29 @@ case "$ACTION" in
 esac
 
 if [ ! -f .env ]; then
-  echo "Die Datei .env fehlt - bitte aus .env.example erstellen."
+  echo "The .env file is missing - create it from .env.example."
   exit 1
 fi
 
 if [ "$ACTION" == join ]; then
   PEER=${SAMBA_PEER_SERVER:-$(env_value SAMBA_PEER_SERVER)}
   if [ -z "$PEER" ]; then
-    echo "Für den Join muss SAMBA_PEER_SERVER in der .env gesetzt sein."
+    echo "SAMBA_PEER_SERVER must be set in .env for a join."
     exit 1
   fi
-  # Während des Joins muss der Container die Domäne über den Peer auflösen
+  # During the join the container has to resolve the domain via the peer
   export SAMBA_DNS_SERVER=$PEER
 fi
 
-echo "ACHTUNG: Die Volumes samba-dc-etc, samba-dc-lib und samba-dc-bind werden"
-echo "gelöscht. Eine vorhandene Installation geht dabei vollständig verloren."
-read -r -p "Fortfahren mit '$ACTION'? [j/N] " ANSWER
+echo "WARNING: The volumes samba-dc-etc, samba-dc-lib and samba-dc-bind will be"
+echo "deleted. An existing installation will be lost completely."
+read -r -p "Continue with '$ACTION'? [y/N] " ANSWER
 case "$ANSWER" in
-  j|J|y|Y) ;;
-  *) echo "Abgebrochen."; exit 1 ;;
+  y|Y|j|J) ;;
+  *) echo "Aborted."; exit 1 ;;
 esac
 
 docker compose down -v
 docker compose run -t -i --rm -e DOMAIN_ACTION="$ACTION" samba-dc init
 
-echo "Initialisierung abgeschlossen. Start mit: docker compose up -d"
+echo "Initialization finished. Start with: docker compose up -d"
