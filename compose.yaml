@@ -1,0 +1,42 @@
+services:
+
+  samba-dc:
+    build:
+      context: ./docker
+      args:
+        SAMBA_SUITE: ${SAMBA_SUITE:-trixie-backports}
+    image: samba-dc:latest
+    container_name: samba-dc
+    restart: unless-stopped
+    network_mode: host
+    # Samba speichert NT-ACLs (u. a. für sysvol) in security.*-xattrs
+    cap_add:
+      - SYS_ADMIN
+    # Normaler Betrieb: der DC ist sein eigener DNS-Server.
+    # init.sh setzt SAMBA_DNS_SERVER beim Join auf den Peer.
+    dns:
+      - ${SAMBA_DNS_SERVER:-${SAMBA_HOST_ADDRESS}}
+    dns_search:
+      - ${SAMBA_REALM}
+    extra_hosts:
+      - ${SAMBA_HOST_NAME}.${SAMBA_REALM} ${SAMBA_HOST_NAME}:${SAMBA_HOST_ADDRESS}
+    environment:
+      PEER_SERVER: ${SAMBA_PEER_SERVER:-}
+      INTERFACES: ${SAMBA_INTERFACE:-}
+      REALM: ${SAMBA_REALM:-HOME.LAN}
+      TZ: ${TZ:-UTC}
+      WORKGROUP: ${WORKGROUP:-HOME}
+      BIND_HOST_IP: ${SAMBA_HOST_ADDRESS}
+      DNS_FORWARDER: ${SAMBA_DNS_FORWARDER:-}
+    volumes:
+      - samba-ad-etc:/etc/samba
+      - samba-ad-lib:/var/lib/samba
+      - samba-bind:/var/bind
+
+volumes:
+  samba-ad-etc:
+    name: samba-dc-etc
+  samba-ad-lib:
+    name: samba-dc-lib
+  samba-bind:
+    name: samba-dc-bind
