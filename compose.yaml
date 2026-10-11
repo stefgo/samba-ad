@@ -2,7 +2,7 @@ services:
 
   samba-dc:
     build: ./docker
-    image: ghcr.io/stefgo/samba-ad-docker:latest
+    image: ghcr.io/stefgo/samba-ad:latest
     container_name: samba-dc
     restart: unless-stopped
     network_mode: host

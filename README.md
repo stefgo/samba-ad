@@ -1,4 +1,4 @@
-# samba-ad-docker
+# samba-ad
 
 Samba Active Directory Domain Controller als Docker-Container, mit BIND 9 als
 DNS-Backend (`BIND9_DLZ`). Basis ist Debian trixie; Samba kommt aus
@@ -46,7 +46,7 @@ manuell über "Run workflow".
 | `latest` | Aktueller Stand |
 | `JJJJMMTT` | Stand eines bestimmten Bautags, z. B. für ein Rollback |
 
-`compose.yaml` verwendet `ghcr.io/stefgo/samba-ad-docker:latest`. Das
+`compose.yaml` verwendet `ghcr.io/stefgo/samba-ad:latest`. Das
 Paket ist privat, der Docker-Host muss sich daher einmalig mit einem Personal
 Access Token (Recht `read:packages`) anmelden:
 
