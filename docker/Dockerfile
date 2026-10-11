@@ -1,7 +1,5 @@
 FROM debian:trixie
 
-# Paketquelle für Samba: trixie oder trixie-backports
-ARG SAMBA_SUITE=trixie-backports
 ARG DEBIAN_FRONTEND=noninteractive
 
 ENV ADMIN_PASSWORD="" \
@@ -21,17 +19,15 @@ ENV ADMIN_PASSWORD="" \
     WINBIND_USE_DEFAULT_DOMAIN=yes \
     WORKGROUP=HOME
 
-RUN if [ "$SAMBA_SUITE" != trixie ]; then \
-      echo "deb http://deb.debian.org/debian $SAMBA_SUITE main" \
-        > /etc/apt/sources.list.d/samba.list; \
-    fi \
+RUN echo "deb http://deb.debian.org/debian trixie-backports main" \
+      > /etc/apt/sources.list.d/backports.list \
  && apt-get update \
  && apt-get upgrade -y \
     # Common tools, Kerberos, Bind, healthcheck tool
  && apt-get install -y apt-utils supervisor krb5-config krb5-user \
       bind9 bind9-dnsutils netcat-traditional \
     # Samba server
- && apt-get install -y -t "$SAMBA_SUITE" samba samba-ad-dc \
+ && apt-get install -y -t trixie-backports samba samba-ad-dc \
       samba-ad-provision samba-client winbind \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*

@@ -1,8 +1,8 @@
 # samba-ad-docker
 
 Samba Active Directory Domain Controller als Docker-Container, mit BIND 9 als
-DNS-Backend (`BIND9_DLZ`). Basis ist Debian trixie; Samba kommt wahlweise aus
-trixie (4.22) oder trixie-backports (4.24).
+DNS-Backend (`BIND9_DLZ`). Basis ist Debian trixie; Samba kommt aus
+trixie-backports (4.24).
 
 ## Voraussetzungen
 
@@ -30,7 +30,6 @@ cp .env.example .env
 | `SAMBA_PEER_SERVER` | Bestehender DC, nur für den Join nötig |
 | `SAMBA_INTERFACE` | Schnittstellen, an die Samba bindet |
 | `SAMBA_DNS_FORWARDER` | Optional: Forwarder für externe Namen (leerzeichengetrennt) |
-| `SAMBA_SUITE` | `trixie` oder `trixie-backports` (Vorgabe) |
 | `TZ` | Zeitzone, Vorgabe `UTC` |
 
 Die `.env` enthält standortspezifische Werte und wird nicht eingecheckt.
@@ -44,11 +43,10 @@ manuell über "Run workflow".
 
 | Tag | Inhalt |
 |---|---|
-| `trixie-backports`, `latest` | Samba aus trixie-backports |
-| `trixie` | Samba aus trixie |
-| `<suite>-JJJJMMTT` | Stand eines bestimmten Bautags, z. B. für ein Rollback |
+| `latest` | Aktueller Stand |
+| `JJJJMMTT` | Stand eines bestimmten Bautags, z. B. für ein Rollback |
 
-`compose.yaml` verwendet `ghcr.io/stefgo/samba-ad-docker:${SAMBA_SUITE}`. Das
+`compose.yaml` verwendet `ghcr.io/stefgo/samba-ad-docker:latest`. Das
 Paket ist privat, der Docker-Host muss sich daher einmalig mit einem Personal
 Access Token (Recht `read:packages`) anmelden:
 
@@ -87,8 +85,8 @@ docker compose exec samba-dc samba-tool dbcheck
 docker compose pull && docker compose up -d      # Image aktualisieren
 ```
 
-Ein Wechsel von `SAMBA_SUITE` auf eine neuere Samba-Version ist mit
-bestehenden Volumes möglich, der Weg zurück auf eine ältere Version nicht.
+Ein Update auf eine neuere Samba-Version ist mit bestehenden Volumes
+möglich, der Weg zurück auf eine ältere Version nicht.
 
 ## Aufbau
 

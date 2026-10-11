@@ -1,11 +1,8 @@
 services:
 
   samba-dc:
-    build:
-      context: ./docker
-      args:
-        SAMBA_SUITE: ${SAMBA_SUITE:-trixie-backports}
-    image: ghcr.io/stefgo/samba-ad-docker:${SAMBA_SUITE:-trixie-backports}
+    build: ./docker
+    image: ghcr.io/stefgo/samba-ad-docker:latest
     container_name: samba-dc
     restart: unless-stopped
     network_mode: host
