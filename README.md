@@ -35,6 +35,30 @@ cp .env.example .env
 
 Die `.env` enthält standortspezifische Werte und wird nicht eingecheckt.
 
+## Image
+
+GitHub Actions baut das Image für `linux/amd64` und `linux/arm64` und legt es
+in der GitHub Container Registry ab: bei Änderungen unter `docker/`, jeden
+Montag (damit Debian- und Samba-Updates ins Image kommen) und auf Wunsch
+manuell über "Run workflow".
+
+| Tag | Inhalt |
+|---|---|
+| `trixie-backports`, `latest` | Samba aus trixie-backports |
+| `trixie` | Samba aus trixie |
+| `<suite>-JJJJMMTT` | Stand eines bestimmten Bautags, z. B. für ein Rollback |
+
+`compose.yaml` verwendet `ghcr.io/stefgo/samba-ad-docker:${SAMBA_SUITE}`. Das
+Paket ist privat, der Docker-Host muss sich daher einmalig mit einem Personal
+Access Token (Recht `read:packages`) anmelden:
+
+```sh
+docker login ghcr.io -u stefgo
+docker compose pull
+```
+
+Alternativ baut `docker compose build` das Image lokal unter demselben Namen.
+
 ## Betriebsarten
 
 | Aufruf | Zweck | DNS-Server des Containers |
@@ -60,7 +84,7 @@ docker compose up -d
 docker compose logs -f                          # Logs von BIND und Samba
 docker compose exec samba-dc samba-tool drs showrepl
 docker compose exec samba-dc samba-tool dbcheck
-docker compose build --pull && docker compose up -d   # Image aktualisieren
+docker compose pull && docker compose up -d      # Image aktualisieren
 ```
 
 Ein Wechsel von `SAMBA_SUITE` auf eine neuere Samba-Version ist mit
@@ -72,6 +96,7 @@ bestehenden Volumes möglich, der Weg zurück auf eine ältere Version nicht.
 |---|---|
 | `compose.yaml` | Service-Definition und Volumes |
 | `init.sh` | Initialisierung (`provision` / `join`) |
+| `.github/workflows/build.yml` | Bau und Bereitstellung des Images |
 | `docker/Dockerfile` | Image mit Samba, BIND und supervisord |
 | `docker/entrypoint.sh` | Initialisierung und Erzeugen der Konfiguration beim Start |
 | `docker/*.j2` | Vorlagen für `named.conf` und `smb.conf` |
