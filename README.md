@@ -67,10 +67,19 @@ name.
 | `./init.sh join` | Initialize and join an existing domain | `SAMBA_PEER_SERVER` |
 | `docker compose up -d` | Start an existing installation | `SAMBA_HOST_ADDRESS` |
 
-`init.sh` **deletes the volumes** `samba-dc-etc`, `samba-dc-lib` and
-`samba-dc-bind` after a confirmation prompt and then asks for the password of
-the domain administrator. With `provision` the password is newly set, with
-`join` it is the password of the existing domain.
+`init.sh` works in this order:
+
+1. It checks Docker, `.env` and the required settings.
+2. It downloads the image. If that fails and no local copy exists, it stops
+   here without changing anything.
+3. It shows the planned settings and the volumes that will be deleted, and
+   asks for confirmation.
+4. It asks for the password of the domain administrator. With `provision` the
+   password is newly set (entered twice), with `join` it is the password of
+   the existing domain. For unattended runs the password can be passed in the
+   `ADMIN_PASSWORD` environment variable.
+5. It **deletes the volumes** `samba-dc-etc`, `samba-dc-lib` and
+   `samba-dc-bind` and runs the initialization.
 
 After initialization, start the domain controller with:
 
