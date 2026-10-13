@@ -24,8 +24,12 @@ services:
       TZ: ${TZ:-UTC}
       WORKGROUP: ${WORKGROUP:-HOME}
       BIND_HOST_IP: ${SAMBA_HOST_ADDRESS}
+      BIND_VIRTUAL_IPS: ${SAMBA_VIRTUAL_ADDRESS:-}
+      BIND_INTERFACES_ONLY: ${SAMBA_BIND_INTERFACES_ONLY:-yes}
       DNS_FORWARDER: ${SAMBA_DNS_FORWARDER:-}
     volumes:
+      # Optional custom certificate: cert.pem, key.pem and ca.pem
+      - ./tls:/tls:ro
       - samba-ad-etc:/etc/samba
       - samba-ad-lib:/var/lib/samba
       - samba-bind:/var/bind

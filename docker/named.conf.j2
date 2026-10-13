@@ -4,7 +4,9 @@
 options {
     directory "/var/bind";
 
-    listen-on { {{ BIND_HOST_IP }}; };
+    // Addresses that do not exist yet (a virtual address held by the peer)
+    // are picked up as soon as they appear on an interface.
+    listen-on { {{ LISTEN_ON }} };
 
     allow-recursion { any; };
     allow-query-cache { any; };

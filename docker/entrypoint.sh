@@ -14,6 +14,57 @@ if [ ! -f /etc/timezone ] && [ -n "$TZ" ]; then
   echo "$TZ" >/etc/timezone
 fi
 
+fail() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+case "$BIND_INTERFACES_ONLY" in
+  yes|no) ;;
+  *) fail "BIND_INTERFACES_ONLY must be yes or no (got '$BIND_INTERFACES_ONLY')." ;;
+esac
+
+# A virtual address moves between the DCs. Samba registers every address of
+# its "interfaces" setting as A record of this DC, so the virtual address
+# must never end up there - neither directly nor through an interface name.
+if [ -n "$BIND_VIRTUAL_IPS" ]; then
+  if [ -z "$INTERFACES" ]; then
+    fail "INTERFACES is required when a virtual address is configured."
+  fi
+  for entry in $INTERFACES; do
+    if [[ ! $entry =~ ^[0-9A-Fa-f.:]+/[0-9]+$ ]]; then
+      fail "INTERFACES entry '$entry' must have the form address/prefix" \
+        "when a virtual address is configured (no interface names)."
+    fi
+  done
+fi
+for vip in $BIND_VIRTUAL_IPS; do
+  if [[ ! $vip =~ ^[0-9]+(\.[0-9]+){3}$ ]]; then
+    fail "Virtual address '$vip' is not an IPv4 address without prefix."
+  fi
+  if [ "$vip" == "$BIND_HOST_IP" ]; then
+    fail "Virtual address $vip must differ from the host address."
+  fi
+  if [ "$vip" == "$PEER_SERVER" ]; then
+    fail "Virtual address $vip must not be used as PEER_SERVER."
+  fi
+  for entry in $DNS_FORWARDER; do
+    if [ "$vip" == "$entry" ]; then
+      fail "Virtual address $vip must not be used as DNS forwarder."
+    fi
+  done
+  for entry in $INTERFACES; do
+    if [ "$vip" == "${entry%%/*}" ]; then
+      fail "Virtual address $vip must not be listed in INTERFACES."
+    fi
+  done
+done
+
+if { [ -f /tls/cert.pem ] && [ ! -f /tls/key.pem ]; } ||
+    { [ ! -f /tls/cert.pem ] && [ -f /tls/key.pem ]; }; then
+  fail "A custom certificate needs both /tls/cert.pem and /tls/key.pem."
+fi
+
 if [ $# == 1 ] && [ "$1" == "init" ]; then
   if [ -f /var/lib/samba/private/secrets.ldb ]; then
     echo Samba already initialized - cleanup first!
@@ -76,6 +127,14 @@ if [ -n "$DNS_FORWARDER" ]; then
   FORWARDERS="forwarders { $(echo $DNS_FORWARDER | sed 's/ /; /g'); };"
 fi
 
+# 127.0.0.1 allows local health checks, e.g. from keepalived
+LISTEN_ON="127.0.0.1;"
+for address in $BIND_HOST_IP $BIND_VIRTUAL_IPS; do
+  if [[ " $LISTEN_ON" != *" $address;"* ]]; then
+    LISTEN_ON+=" $address;"
+  fi
+done
+
 for file in /etc/bind/named.conf \
       /etc/samba/smb.conf /etc/samba/conf.d/netlogon.conf \
       /etc/samba/conf.d/sysvol.conf; do
@@ -91,9 +150,32 @@ for file in /etc/bind/named.conf \
       -e "s:{{ SERVER_STRING }}:$SERVER_STRING:" \
       -e "s:{{ WINBIND_USE_DEFAULT_DOMAIN }}:$WINBIND_USE_DEFAULT_DOMAIN:" \
       -e "s:{{ WORKGROUP }}:$WORKGROUP:" \
-      -e "s:{{ BIND_HOST_IP }}:$BIND_HOST_IP:" \
+      -e "s:{{ LISTEN_ON }}:$LISTEN_ON:" \
+      -e "s:{{ BIND_INTERFACES_ONLY }}:$BIND_INTERFACES_ONLY:" \
       "/root/$(basename $file).j2" > $file
 done
+
+# Samba insists on a private key that only root can read, so the mounted
+# files are copied instead of being used in place.
+rm -rf /etc/samba/tls
+if [ -f /tls/cert.pem ]; then
+  echo 'Using the custom TLS certificate from /tls'
+  mkdir -m 700 /etc/samba/tls
+  install -m 644 /tls/cert.pem /etc/samba/tls/cert.pem
+  install -m 600 /tls/key.pem /etc/samba/tls/key.pem
+  {
+    echo '	tls enabled = yes'
+    echo '	tls certfile = /etc/samba/tls/cert.pem'
+    echo '	tls keyfile = /etc/samba/tls/key.pem'
+    if [ -f /tls/ca.pem ]; then
+      install -m 644 /tls/ca.pem /etc/samba/tls/ca.pem
+      echo '	tls cafile = /etc/samba/tls/ca.pem'
+    else
+      # Without this, Samba looks for its own generated CA and fails to start
+      echo '	tls cafile ='
+    fi
+  } >> /etc/samba/smb.conf
+fi
 
 for file in /etc/samba/conf.d/*.conf; do
   echo "include = $file" >> /etc/samba/smb.conf
