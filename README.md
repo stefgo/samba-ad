@@ -231,19 +231,22 @@ controller in SADM. There are two ways:
   The token is valid for one registration and one hour; remove it from `.env`
   afterwards. Nothing listens on the domain controller.
 - **The server connects to the agent.** Leave `SADM_SERVER_URL` empty. The
-  agent then listens on `SADM_CLIENT_PORT` and prints a setup PIN into the
-  log (`docker compose logs samba-dc | grep PIN`). Enter the address of the
-  domain controller and the PIN in SADM. Because of `network_mode: host` the
-  port is open on every address of the host; restrict it with a firewall or
-  with `allowedNetworks` in the agent's `config.yaml`.
+  agent then listens on `listenPort` from `sadm-config.yaml` (3021) and
+  prints a setup PIN into the log (`docker compose logs samba-dc | grep PIN`).
+  Enter the address of the domain controller and the PIN in SADM. Because of
+  `network_mode: host` the port is open on every address of the host;
+  restrict it with a firewall or with `allowedNetworks` in
+  `sadm-config.yaml`.
 
 The agent keeps the identity it was given in `/var/lib/samba/sadm-client`,
 that is in the `samba-dc-lib` volume. `init.sh` deletes that volume, so a
 domain controller that is provisioned or joined anew has to be registered
 again. To register an existing one again, delete `identity.json` in that
-directory and restart the container. An optional `config.yaml` in the same
-directory holds further settings, see the
-[agent documentation](https://github.com/stefgo/samba-ad-manager/blob/main/docs/agent.md).
+directory and restart the container.
+
+### Agent settings
+
+The basic settings come from `.env`:
 
 | Variable | Meaning |
 |---|---|
@@ -251,10 +254,26 @@ directory holds further settings, see the
 | `SADM_SERVER_URL` | URL of the SADM server, e.g. `https://sadm.example.net`. Empty: the agent waits for the server to connect |
 | `SADM_REGISTRATION_TOKEN` | Token from "Add Agent", only needed for the registration |
 | `SADM_ALLOW_SELF_SIGNED` | `true` accepts a server certificate that does not validate |
-| `SADM_CLIENT_PORT` | Port the agent listens on without `SADM_SERVER_URL`, defaults to `3021` |
 
-The agent has no log level of its own. It follows `SAMBA_LOG_LEVEL`, shifted
-so that the default of Samba is the default of the agent:
+Everything else lives in `sadm-config.yaml` next to `compose.yaml`, which is
+mounted as the agent's `config.yaml`. Every key in it is commented out and
+shows its default, so an unchanged file changes nothing. Remove the `#` of a
+key, change its value and restart the container:
+
+```sh
+docker compose restart samba-dc
+```
+
+The variables win over the file: `SADM_SERVER_URL` over `serverUrl` and
+`SADM_ALLOW_SELF_SIGNED` over `allowSelfSignedCertificates`, as long as they
+are not empty. When the server connects to the agent, the agent writes the
+server's URL into the file itself, which is why it is mounted writable.
+Paths in the file, e.g. for `tls`, have to be absolute. See the
+[agent documentation](https://github.com/stefgo/samba-ad-manager/blob/main/docs/agent.md)
+for all settings.
+
+Without `logLevel` in `sadm-config.yaml` the agent follows `SAMBA_LOG_LEVEL`,
+shifted so that the default of Samba is the default of the agent:
 
 | `SAMBA_LOG_LEVEL` | Agent |
 |---|---|
@@ -334,6 +353,30 @@ docker compose pull && docker compose up -d      # update the image
 Updating to a newer Samba version works with existing volumes; going back to
 an older version does not.
 
+### Missing group policy folders
+
+Samba does not replicate the sysvol. A group policy that exists in the
+directory can therefore lack its folder below
+`sysvol/<realm>/Policies` on a domain controller, e.g. after a join.
+`restore-gpo-folders.sh` creates such folders: `{GUID}/GPT.INI` with the
+version the directory names and empty `MACHINE` and `USER` folders. Folders
+that exist are left alone.
+
+```sh
+./restore-gpo-folders.sh            # show what is missing, change nothing
+./restore-gpo-folders.sh --apply    # create the missing folders
+```
+
+The script runs inside the running container `samba-dc`; `SAMBA_CONTAINER`
+names another one. It sets no ACLs; reset them afterwards with:
+
+```sh
+docker compose exec samba-dc samba-tool ntacl sysvolreset
+```
+
+The folders it creates hold no policy settings. If a policy contains
+settings, copy its folder from a domain controller that has it instead.
+
 ## Layout
 
 | Path | Content |
@@ -341,6 +384,8 @@ an older version does not.
 | `compose.yaml` | Service definition and volumes |
 | `init.sh` | Initialization (`provision` / `join`) |
 | `tls/` | Optional custom certificate, see [Custom TLS certificate](#custom-tls-certificate) |
+| `sadm-config.yaml` | Settings of the SADM agent, see [Agent settings](#agent-settings) |
+| `restore-gpo-folders.sh` | Creates missing group policy folders in the sysvol, see [Missing group policy folders](#missing-group-policy-folders) |
 | `.github/workflows/build.yml` | Builds and publishes the image |
 | `docker/Dockerfile` | Image with Samba, BIND, supervisord and the SADM agent |
 | `docker/entrypoint.sh` | Initialization and config generation at startup |

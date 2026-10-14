@@ -1,0 +1,49 @@
+# Settings of the SADM agent, mounted as /etc/sadm-client/config.yaml.
+# Only read with SADM_AGENT=yes; restart the container after a change.
+#
+# Every key shows its default. Remove the "#" to change one.
+# Non-empty variables in .env win over this file (SADM_SERVER_URL,
+# SADM_ALLOW_SELF_SIGNED). The agent may write serverUrl into this file
+# itself when the server registers it.
+# Reference: https://github.com/stefgo/samba-ad-manager/blob/main/docs/agent.md
+
+# URL of the SADM server the agent connects to. Unset: the server connects
+# to the agent instead.
+#serverUrl: https://sadm.example.net
+
+# fatal, error, warn, info, debug, trace or silent.
+# Unset: derived from SAMBA_LOG_LEVEL.
+#logLevel: info
+
+# Port of the agent's web server, used when the server connects to the agent.
+# With network_mode: host it is open on every address of the host.
+#listenPort: 3021
+
+# Addresses or IPv4 networks the server may connect from. Empty: any.
+#allowedNetworks:
+#    - 192.0.2.10
+#    - 192.0.2.0/24
+
+# Local status page and registration page of the agent's web server.
+#enableStatusPage: false
+#enableRegisterPage: false
+
+# Accept a server certificate that does not validate.
+#allowSelfSignedCertificates: false
+
+# Serve the agent's web server over TLS (wss://). Absolute paths only;
+# ./tls is mounted at /tls.
+#tls:
+#    cert: /tls/cert.pem
+#    key: /tls/key.pem
+
+#report:
+#    # Seconds between two readings (10-3600)
+#    interval: 30
+#    # Hours between two database checks (0-720); 0: only when the server asks
+#    dbcheckIntervalHours: 24
+
+# How the agent reads the local Samba. Matches this image; leave as is.
+#samba:
+#    python: python3
+#    supervisorSocket: /var/run/supervisor.sock
