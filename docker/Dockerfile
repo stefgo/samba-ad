@@ -1,3 +1,8 @@
+# Tag of the SADM agent that is copied into this image (see README.md)
+ARG SADM_CLIENT_TAG=main
+
+FROM ghcr.io/stefgo/sadm-client:${SADM_CLIENT_TAG} AS sadm-client
+
 FROM debian:trixie
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -16,6 +21,7 @@ ENV ADMIN_PASSWORD="" \
     NETBIOS_NAME="" \
     PEER_SERVER="" \
     REALM=home.lan \
+    SADM_AGENT=no \
     SERVER_STRING="Domain Controller" \
     TZ="" \
     WINBIND_USE_DEFAULT_DOMAIN=yes \
@@ -31,10 +37,16 @@ RUN echo "deb http://deb.debian.org/debian trixie-backports main" \
     # Samba server
  && apt-get install -y -t trixie-backports samba samba-ad-dc \
       samba-ad-provision samba-client winbind \
+    # Samba's Python modules; the SADM agent reads the local database with them
+      python3-samba \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
 
 VOLUME /var/lib/samba /etc/samba
+
+# The SADM agent: its own Node runtime, the agent and a supervisord program.
+# entrypoint.sh starts it only with SADM_AGENT=yes.
+COPY --from=sadm-client /opt/sadm-client /opt/sadm-client
 
 COPY *.j2 /root/
 COPY supervisord.conf /etc

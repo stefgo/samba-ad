@@ -27,6 +27,13 @@ services:
       BIND_VIRTUAL_IPS: ${SAMBA_VIRTUAL_ADDRESS:-}
       BIND_INTERFACES_ONLY: ${SAMBA_BIND_INTERFACES_ONLY:-yes}
       DNS_FORWARDER: ${SAMBA_DNS_FORWARDER:-}
+      LOG_LEVEL: ${SAMBA_LOG_LEVEL:-1}
+      # Optional SADM agent, see "SADM agent" in README.md
+      SADM_AGENT: ${SADM_AGENT:-no}
+      SADM_SERVER_URL: ${SADM_SERVER_URL:-}
+      SADM_REGISTRATION_TOKEN: ${SADM_REGISTRATION_TOKEN:-}
+      SADM_ALLOW_SELF_SIGNED: ${SADM_ALLOW_SELF_SIGNED:-}
+      SADM_CLIENT_PORT: ${SADM_CLIENT_PORT:-3021}
     volumes:
       # Optional custom certificate: cert.pem, key.pem and ca.pem
       - ./tls:/tls:ro
