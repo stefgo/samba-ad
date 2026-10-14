@@ -33,6 +33,8 @@ cp .env.example .env
 | `SAMBA_INTERFACE` | Fixed addresses of this DC with prefix length, e.g. `127.0.0.1/8 192.168.1.10/24`; Samba registers them in DNS |
 | `SAMBA_BIND_INTERFACES_ONLY` | `yes` (default): Samba listens on the addresses of `SAMBA_INTERFACE` only; `no`: on every address of the host |
 | `SAMBA_DNS_FORWARDER` | Optional: forwarders for external names (space-separated) |
+| `SAMBA_LOG_LEVEL` | Log level of Samba, `0` to `10`, defaults to `1`. The [SADM agent](#sadm-agent) follows it |
+| `SADM_AGENT` | `yes` starts the [SADM agent](#sadm-agent); defaults to `no` |
 | `TZ` | Time zone, defaults to `UTC` |
 
 The `.env` file holds site-specific values and is not committed.
@@ -195,6 +197,72 @@ CA, either in its own configuration or in the certificate store of its
 system. To renew the certificate, repeat the steps from the signing request
 onwards; the CA and with it the configuration of the clients stay unchanged.
 
+## SADM agent
+
+[Samba AD Manager](https://github.com/stefgo/samba-ad-manager) (SADM) measures
+a domain controller over the network. Its agent runs inside this container
+and reports what cannot be asked that way: the services of the `samba`
+process, the programs of supervisord, free space, the group policy versions
+in the sysvol and a read-only database check. It changes nothing on the
+domain controller.
+
+The agent is part of the image but off by default. Switch it on per domain
+controller in `.env` and recreate the container:
+
+```sh
+SADM_AGENT=yes
+```
+
+```sh
+docker compose up -d
+```
+
+It runs as a third program of supervisord, after BIND and Samba. It is not
+part of the health check: a domain controller whose agent is down keeps
+running.
+
+### Registering the agent
+
+Each agent is registered once, with "Add Agent" on the page of its domain
+controller in SADM. There are two ways:
+
+- **The agent connects to the server.** Generate a token in SADM, set
+  `SADM_SERVER_URL` and `SADM_REGISTRATION_TOKEN` and recreate the container.
+  The token is valid for one registration and one hour; remove it from `.env`
+  afterwards. Nothing listens on the domain controller.
+- **The server connects to the agent.** Leave `SADM_SERVER_URL` empty. The
+  agent then listens on `SADM_CLIENT_PORT` and prints a setup PIN into the
+  log (`docker compose logs samba-dc | grep PIN`). Enter the address of the
+  domain controller and the PIN in SADM. Because of `network_mode: host` the
+  port is open on every address of the host; restrict it with a firewall or
+  with `allowedNetworks` in the agent's `config.yaml`.
+
+The agent keeps the identity it was given in `/var/lib/samba/sadm-client`,
+that is in the `samba-dc-lib` volume. `init.sh` deletes that volume, so a
+domain controller that is provisioned or joined anew has to be registered
+again. To register an existing one again, delete `identity.json` in that
+directory and restart the container. An optional `config.yaml` in the same
+directory holds further settings, see the
+[agent documentation](https://github.com/stefgo/samba-ad-manager/blob/main/docs/agent.md).
+
+| Variable | Meaning |
+|---|---|
+| `SADM_AGENT` | `yes` starts the agent; defaults to `no` |
+| `SADM_SERVER_URL` | URL of the SADM server, e.g. `https://sadm.example.net`. Empty: the agent waits for the server to connect |
+| `SADM_REGISTRATION_TOKEN` | Token from "Add Agent", only needed for the registration |
+| `SADM_ALLOW_SELF_SIGNED` | `true` accepts a server certificate that does not validate |
+| `SADM_CLIENT_PORT` | Port the agent listens on without `SADM_SERVER_URL`, defaults to `3021` |
+
+The agent has no log level of its own. It follows `SAMBA_LOG_LEVEL`, shifted
+so that the default of Samba is the default of the agent:
+
+| `SAMBA_LOG_LEVEL` | Agent |
+|---|---|
+| `0` | `warn` |
+| `1`, `2` | `info` |
+| `3` to `9` | `debug` |
+| `10` | `trace` |
+
 ## Image
 
 GitHub Actions builds the image for `linux/amd64` and `linux/arm64` and
@@ -218,6 +286,12 @@ docker compose pull
 
 Alternatively, `docker compose build` builds the image locally under the same
 name.
+
+The image takes the SADM agent from `ghcr.io/stefgo/sadm-client`. The build
+argument `SADM_CLIENT_TAG` selects its tag and defaults to `main`. If that
+package is private, it has to grant this repository read access (package
+settings, "Manage Actions access"), otherwise the build in GitHub Actions
+fails.
 
 ## Modes of operation
 
@@ -251,7 +325,7 @@ docker compose up -d
 ## Operation
 
 ```sh
-docker compose logs -f                          # logs of BIND and Samba
+docker compose logs -f                          # logs of BIND, Samba and the agent
 docker compose exec samba-dc samba-tool drs showrepl
 docker compose exec samba-dc samba-tool dbcheck
 docker compose pull && docker compose up -d      # update the image
@@ -268,7 +342,7 @@ an older version does not.
 | `init.sh` | Initialization (`provision` / `join`) |
 | `tls/` | Optional custom certificate, see [Custom TLS certificate](#custom-tls-certificate) |
 | `.github/workflows/build.yml` | Builds and publishes the image |
-| `docker/Dockerfile` | Image with Samba, BIND and supervisord |
+| `docker/Dockerfile` | Image with Samba, BIND, supervisord and the SADM agent |
 | `docker/entrypoint.sh` | Initialization and config generation at startup |
 | `docker/*.j2` | Templates for `named.conf` and `smb.conf` |
 

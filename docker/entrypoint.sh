@@ -24,6 +24,11 @@ case "$BIND_INTERFACES_ONLY" in
   *) fail "BIND_INTERFACES_ONLY must be yes or no (got '$BIND_INTERFACES_ONLY')." ;;
 esac
 
+case "$SADM_AGENT" in
+  yes|no) ;;
+  *) fail "SADM_AGENT must be yes or no (got '$SADM_AGENT')." ;;
+esac
+
 # A virtual address moves between the DCs. Samba registers every address of
 # its "interfaces" setting as A record of this DC, so the virtual address
 # must never end up there - neither directly nor through an interface name.
@@ -187,6 +192,27 @@ if [ $# == 1 ] && [ "$1" == "init" ]; then
   exit 0
 else
   export MODEL
+
+  # The SADM agent is a program of the same supervisord. It reads LOG_LEVEL
+  # as well, but expects a name instead of Samba's number. Samba's default (1)
+  # and the agent's default (info) both mean normal operation, so the scale is
+  # shifted by one step compared to Samba's own names.
+  mkdir -p /etc/supervisor/conf.d
+  rm -f /etc/supervisor/conf.d/sadm-client.conf
+  if [ "$SADM_AGENT" == yes ]; then
+    # LOG_LEVEL may carry debug classes ("1 auth:3"); the leading number counts
+    case "${LOG_LEVEL%%[!0-9]*}" in
+      0) SADM_LOG_LEVEL=warn ;;
+      ''|1|2) SADM_LOG_LEVEL=info ;;
+      10) SADM_LOG_LEVEL=trace ;;
+      *) SADM_LOG_LEVEL=debug ;;
+    esac
+    echo "Starting the SADM agent (log level $SADM_LOG_LEVEL)"
+    {
+      cat /opt/sadm-client/supervisor.conf
+      echo "environment=LOG_LEVEL=\"$SADM_LOG_LEVEL\""
+    } > /etc/supervisor/conf.d/sadm-client.conf
+  fi
 
   exec supervisord
 fi
