@@ -33,10 +33,12 @@ services:
       SADM_SERVER_URL: ${SADM_SERVER_URL:-}
       SADM_REGISTRATION_TOKEN: ${SADM_REGISTRATION_TOKEN:-}
       SADM_ALLOW_SELF_SIGNED: ${SADM_ALLOW_SELF_SIGNED:-}
-      SADM_CLIENT_PORT: ${SADM_CLIENT_PORT:-3021}
+      SADM_CLIENT_CONFIG: /etc/sadm-client/config.yaml
     volumes:
       # Optional custom certificate: cert.pem, key.pem and ca.pem
       - ./tls:/tls:ro
+      # Settings of the SADM agent; writable, the agent may store serverUrl
+      - ./sadm-config.yaml:/etc/sadm-client/config.yaml
       - samba-ad-etc:/etc/samba
       - samba-ad-lib:/var/lib/samba
       - samba-bind:/var/bind
