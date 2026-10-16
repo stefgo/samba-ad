@@ -1,53 +1,191 @@
+# Builds and publishes the image. Each architecture is built on a native
+# runner -- under QEMU the arm64 apt-get install alone took six minutes. Nothing
+# is tagged until both architectures have been started and answered. It creates
+# no version number -- that is release.yml alone, on request.
 name: Build and publish image
 
 on:
   push:
+    # main publishes the rolling :main image and nothing else
     branches: [main]
+    # A release tag reaches this workflow through the workflow_dispatch that
+    # release.yml fires -- semantic-release pushes the tag over GITHUB_TOKEN,
+    # and such a push creates no workflow run. The filter covers a tag pushed
+    # by hand.
+    tags: ["v*.*.*"]
+    # Path filters apply to branch pushes only, never to tags or dispatches
     paths:
       - docker/**
       - .github/workflows/build.yml
-  schedule:
-    # Weekly rebuild to pick up Debian and Samba updates
-    - cron: "17 3 * * 1"
+  # Started by release.yml for a new tag and by rebuild.yml every week
   workflow_dispatch:
+
+# A second push to main makes the older build pointless. Tag builds are never
+# cancelled -- their image is the artefact of a release.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 env:
   IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
+  # Pushed by digest and without a tag: tagging is the publish job's business,
+  # and that one runs after the smoke test.
   build:
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      # Also needed to pull ghcr.io/stefgo/sadm-client
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Tags are attached by the publish job; here only the labels are needed
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: docker
+          platforms: ${{ matrix.platform }}
+          # Every build takes the current Debian and Samba packages
+          pull: true
+          no-cache: true
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+
+      # The file name is the digest. Matrix jobs cannot each set an output of
+      # their own, so this is how it reaches the later jobs.
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: digests-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # A gate, not a report: nothing is tagged until the image of each
+  # architecture has run its tools. No domain is provisioned -- that needs a
+  # network setup a runner does not have.
+  smoke:
+    name: Smoke test
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: digests-${{ matrix.arch }}
+          path: /tmp/digests
+
+      - name: Run the tools of the image
+        run: |
+          ref="$IMAGE@sha256:$(basename /tmp/digests/*)"
+          docker run --rm --entrypoint sh "$ref" -euc '
+            samba -V
+            samba-tool --version
+            named -v
+            certbot --version
+            echo "sadm-client $(/opt/sadm-client/bin/sadm-client --version)"
+          '
+
+  # Turns the per-architecture digests into one multi-arch manifest list under
+  # every tag computed here.
+  publish:
+    name: Tag and publish
+    needs: smoke
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v8
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
 
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v4
 
-      - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE }}
           flavor: latest=false
           tags: |
-            type=raw,value=latest
-            type=raw,value={{date 'YYYYMMDD'}}
+            # main: the branch name and the commit
+            type=ref,event=branch
+            type=sha,prefix=sha-
+            # A release tag v1.2.0: 1.2.0 and 1.2
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            # Only a stable release moves latest; a tag with a hyphen is a
+            # prerelease
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-') }}
 
-      - uses: docker/build-push-action@v6
-        with:
-          context: docker
-          platforms: linux/amd64,linux/arm64
-          pull: true
-          no-cache: true
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+      - name: Apply the tags
+        run: |
+          mapfile -t args < <(jq -r '.tags[] | "-t", .' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          if [ "${#args[@]}" -eq 0 ]; then
+            echo "::error::no tags were computed for $IMAGE"
+            exit 1
+          fi
+          for digest in $(basename -a /tmp/digests/*); do
+            args+=("$IMAGE@sha256:$digest")
+          done
+          docker buildx imagetools create "${args[@]}"
+
+      - name: Inspect the published image
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: docker buildx imagetools inspect "$IMAGE:$VERSION"

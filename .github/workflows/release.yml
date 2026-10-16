@@ -1,0 +1,57 @@
+# A release is an action, not a side effect of pushing. A push to main
+# publishes the rolling :main image (build.yml) and nothing else; a version is
+# created only from here, on request.
+#
+# What a release is and how its notes are put together is the same for every
+# stefgo project and lives in https://github.com/stefgo/release-workflows.
+name: Create Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run -- shows the next version and its notes, changes nothing"
+        type: boolean
+        default: true
+      bump:
+        description: "Version step"
+        type: choice
+        options: [auto, patch, minor, major]
+        default: auto
+
+# Two runs at once would read the same last tag and compute the same next
+# version. Not cancelling: a release that dies after the tag leaves the tag
+# without an image.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Branch, .release/next.md and history are known at dispatch; no reason to
+  # learn about them after the checks
+  preflight:
+    uses: stefgo/release-workflows/.github/workflows/preflight.yml@v1
+    permissions:
+      contents: read
+
+  checks:
+    needs: preflight
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  # The image comes from build.yml, which the called workflow starts on the new
+  # tag and waits for
+  release:
+    needs: checks
+    uses: stefgo/release-workflows/.github/workflows/release.yml@v1
+    permissions:
+      contents: write # tag, release, CHANGELOG commit
+      actions: write # starts build.yml for the new tag
+    with:
+      dry_run: ${{ inputs.dry_run }}
+      bump: ${{ inputs.bump }}
+      # A BREAKING CHANGE footer raises the minor position; the major one is
+      # reserved for bump: major
+      breaking: minor
+      build_workflow: build.yml

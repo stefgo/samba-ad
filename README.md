@@ -403,15 +403,20 @@ shifted so that the default of Samba is the default of the agent:
 
 ## Image
 
-GitHub Actions builds the image for `linux/amd64` and `linux/arm64` and
-publishes it to the GitHub Container Registry: on changes below `docker/`,
-every Monday (to pick up Debian and Samba updates) and on demand via
-"Run workflow".
+GitHub Actions builds the image for `linux/amd64` and `linux/arm64`, each on
+a native runner, and publishes it to the GitHub Container Registry. Before it
+is tagged, the image of each architecture has to run its tools (smoke test).
 
 | Tag | Content |
 |---|---|
-| `latest` | Current build |
-| `YYYYMMDD` | Build of a specific day, e.g. for a rollback |
+| `latest` | The last release |
+| `X.Y.Z`, `X.Y` | A release, e.g. `1.2.0`; use it to pin or roll back |
+| `main` | The current state of the main branch, built on every change below `docker/` |
+| `sha-<commit>` | The build of one commit of main |
+
+Every Monday the last release is rebuilt with the current Debian and Samba
+packages, under the same tags. `latest` therefore moves with a release and with
+the weekly rebuild, never with a push to main.
 
 `compose.yaml` uses `ghcr.io/stefgo/samba-ad:latest`. The package is private,
 so the Docker host has to log in once with a personal access token
@@ -430,6 +435,29 @@ argument `SADM_CLIENT_TAG` selects its tag and defaults to `main`. If that
 package is private, it has to grant this repository read access (package
 settings, "Manage Actions access"), otherwise the build in GitHub Actions
 fails.
+
+### Releases
+
+A release is created by hand, with the shared workflow of
+[stefgo/release-workflows](https://github.com/stefgo/release-workflows):
+
+1. Describe what is new in [`.release/next.md`](.release/next.md) and commit
+   it. A release without this text is refused.
+2. Run **Create Release** in the Actions tab, first with `dry_run` on: the
+   summary of the run shows the next version and the complete notes.
+3. Run it again with `dry_run` off. It creates the tag, the GitHub release and
+   the entry in `CHANGELOG.md`, empties `.release/next.md` and builds the
+   image for the new tag.
+
+The version follows the commit messages, which therefore use
+[Conventional Commits](https://www.conventionalcommits.org/): `feat:` raises
+the minor position, `fix:`, `perf:` and `revert:` the patch position; other
+types release nothing. The `bump` input of the workflow overrides this. A hook
+checks the format of every commit message; activate it once per clone:
+
+```sh
+git config core.hooksPath .githooks
+```
 
 ## Modes of operation
 
@@ -507,7 +535,13 @@ settings, copy its folder from a domain controller that has it instead.
 | `letsencrypt/` | Account and certificates of Let's Encrypt, created by the container, not committed |
 | `sadm-config.yaml` | Settings of the SADM agent, see [Agent settings](#agent-settings) |
 | `restore-gpo-folders.sh` | Creates missing group policy folders in the sysvol, see [Missing group policy folders](#missing-group-policy-folders) |
-| `.github/workflows/build.yml` | Builds and publishes the image |
+| `.github/workflows/build.yml` | Builds, smoke-tests and publishes the image |
+| `.github/workflows/release.yml` | Creates a release, see [Releases](#releases) |
+| `.github/workflows/rebuild.yml` | Rebuilds the last release every Monday |
+| `.github/workflows/ci.yml` | shellcheck and hadolint, on every push and before a release |
+| `.github/workflows/cleanup-packages.yml` | Prunes old and untagged images from the registry every night |
+| `.release/` | Hand-written notes of the next release and the footer of every release |
+| `.githooks/commit-msg` | Checks commit messages for Conventional Commits |
 | `docker/Dockerfile` | Image with Samba, BIND, supervisord and the SADM agent |
 | `docker/entrypoint.sh` | Initialization and config generation at startup |
 | `docker/letsencrypt.sh` | Obtains, renews and installs the Let's Encrypt certificate |

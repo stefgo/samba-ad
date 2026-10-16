@@ -1,0 +1,32 @@
+# Lints the shell scripts and the Dockerfile. Runs on every branch and pull
+# request; release.yml calls the same workflow, so a release is gated by
+# exactly these checks.
+name: Check Code
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_call:
+
+# github.workflow is the caller's name under workflow_call, so a release run
+# lands in a group of its own
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      # Preinstalled on the runner
+      - name: shellcheck
+        run: shellcheck init.sh restore-gpo-folders.sh docker/*.sh .githooks/*
+
+      - name: hadolint
+        run: docker run --rm -i hadolint/hadolint < docker/Dockerfile
