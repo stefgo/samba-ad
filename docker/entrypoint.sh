@@ -167,6 +167,8 @@ if [ $# == 1 ] && [ "$1" == "init" ]; then
   echo 'root = administrator' > /etc/samba/smbusers
 fi
 
+# /etc/samba exists, so -m applies to the only directory that is created
+# shellcheck disable=SC2174
 mkdir -p -m 700 /etc/samba/conf.d
 
 # Samba uses the BIND 9.18 DLZ module for BIND 9.20 as well
@@ -174,7 +176,8 @@ DLZ_MODULE=$(ls /usr/lib/*-linux-gnu/samba/bind9/dlz_bind9_18.so)
 
 FORWARDERS=
 if [ -n "$DNS_FORWARDER" ]; then
-  FORWARDERS="forwarders { $(echo $DNS_FORWARDER | sed 's/ /; /g'); };"
+  read -ra forwarders <<< "$DNS_FORWARDER"
+  FORWARDERS="forwarders { $(printf '%s; ' "${forwarders[@]}")};"
 fi
 
 # 127.0.0.1 allows local health checks, e.g. from keepalived
@@ -185,6 +188,8 @@ for address in $BIND_HOST_IP $BIND_VIRTUAL_IPS; do
   fi
 done
 
+# Reads /root/<name>.j2 and writes <file>, never the same file
+# shellcheck disable=SC2094
 for file in /etc/bind/named.conf \
       /etc/samba/smb.conf /etc/samba/conf.d/netlogon.conf \
       /etc/samba/conf.d/sysvol.conf; do
@@ -202,7 +207,7 @@ for file in /etc/bind/named.conf \
       -e "s:{{ WORKGROUP }}:$WORKGROUP:" \
       -e "s:{{ LISTEN_ON }}:$LISTEN_ON:" \
       -e "s:{{ BIND_INTERFACES_ONLY }}:$BIND_INTERFACES_ONLY:" \
-      "/root/$(basename $file).j2" > $file
+      "/root/$(basename "$file").j2" > "$file"
 done
 
 # Samba insists on a private key that only root can read, so the mounted

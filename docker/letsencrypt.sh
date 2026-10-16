@@ -32,6 +32,8 @@ log() {
 }
 
 install_certificate() {
+  # /etc/samba exists, so -m applies to the only directory that is created
+  # shellcheck disable=SC2174
   mkdir -p -m 700 "$TLS_DIR"
   if [ -f "$LIVE/fullchain.pem" ]; then
     # Samba insists on a private key that only root can read
@@ -56,7 +58,7 @@ install_certificate() {
 
 reload_samba() {
   # The LDAP server may still be starting when the first certificate arrives
-  for attempt in 1 2 3 4 5 6; do
+  for _ in 1 2 3 4 5 6; do
     if smbcontrol ldap_server reload-certs >/dev/null 2>&1; then
       log "Samba's LDAP server loaded the new certificate"
       return 0

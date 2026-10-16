@@ -7,6 +7,8 @@ FROM debian:trixie
 
 ARG DEBIAN_FRONTEND=noninteractive
 
+# ADMIN_PASSWORD is only declared here, empty; the value comes from .env
+# hadolint ignore=DL3064
 ENV ACME_DOMAINS="" \
     ACME_EMAIL="" \
     ACME_KEY_TYPE=rsa2048 \
@@ -33,6 +35,9 @@ ENV ACME_DOMAINS="" \
     WINBIND_USE_DEFAULT_DOMAIN=yes \
     WORKGROUP=HOME
 
+# Unpinned on purpose: every build takes the current Debian and Samba
+# packages. Recommends stay, Samba and BIND rely on some of them.
+# hadolint ignore=DL3008,DL3015
 RUN echo "deb http://deb.debian.org/debian trixie-backports main" \
       > /etc/apt/sources.list.d/backports.list \
  && apt-get update \
@@ -61,7 +66,8 @@ COPY supervisord.conf /etc
 COPY letsencrypt.conf /etc/supervisor/
 COPY --chmod=0755 entrypoint.sh letsencrypt.sh /usr/local/bin/
 
-HEALTHCHECK --interval=5s --timeout=3s --retries=60 CMD nc -z localhost 445 || exit 1
+HEALTHCHECK --interval=5s --timeout=3s --retries=60 \
+  CMD ["sh", "-c", "nc -z localhost 445 || exit 1"]
 
 EXPOSE 53 53/udp 88 88/udp 135 137-138/udp 139 389 389/udp 445 464 464/udp 636 3268-3269 49152-65535
 
