@@ -1,0 +1,30 @@
+# Rebuilds the last stable release every week, so that latest and its version
+# tags pick up Debian and Samba updates. build.yml is started on the release
+# tag, so the tags are decided there and nowhere else.
+name: Weekly rebuild
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write # starts build.yml
+      contents: read # reads the latest release
+    steps:
+      - name: Start build.yml on the last release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # The latest release is never a draft or a prerelease
+          ref=$(gh release view --json tagName --jq .tagName 2>/dev/null || true)
+          if [ -z "$ref" ]; then
+            echo "There is no release yet; rebuilding main instead."
+            ref=main
+          fi
+          gh workflow run build.yml --ref "$ref"
+          echo "build.yml started on $ref" >> "$GITHUB_STEP_SUMMARY"

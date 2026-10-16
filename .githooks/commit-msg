@@ -1,0 +1,30 @@
+#!/bin/bash
+
+# Checks that the commit message follows Conventional Commits. The commit types
+# are what the release workflow derives the next version from: feat raises the
+# minor position, fix, perf and revert the patch position.
+#
+# Activated with: git config core.hooksPath .githooks
+
+subject=$(grep -v '^#' "$1" | head -n 1)
+
+# Messages git writes itself
+case "$subject" in
+  "Merge "* | "Revert \""* | "fixup! "* | "squash! "* | "amend! "*) exit 0 ;;
+esac
+
+types='feat|fix|perf|revert|docs|chore|build|ci|refactor|style|test'
+if [[ "$subject" =~ ^($types)(\([a-z0-9._/-]+\))?!?:\ .+ ]]; then
+  exit 0
+fi
+
+cat >&2 <<MSG
+The commit message does not follow Conventional Commits:
+
+  $subject
+
+Expected: <type>[(scope)][!]: <description>
+Types:    ${types//|/, }
+Example:  fix(letsencrypt): retry the reload of the certificate
+MSG
+exit 1

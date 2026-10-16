@@ -1,0 +1,72 @@
+# Prunes the image package. A multi-arch build pushes its per-architecture
+# images untagged, a build that fails the smoke test leaves its digests behind,
+# and every push to main adds a sha-* tag.
+name: Prune Registry
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Log what would be deleted, delete nothing"
+        type: boolean
+        default: true
+
+# The action is not safe to run twice against the same package. Not
+# cancelling: aborting halfway through a delete is the worse outcome.
+concurrency:
+  group: cleanup-images
+  cancel-in-progress: false
+
+jobs:
+  delete-old-packages:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      # dataaxiom/ghcr-cleanup-action knows what a manifest child is: an
+      # untagged child of a tagged multi-arch image is not deleted
+      - name: Delete unwanted versions
+        uses: dataaxiom/ghcr-cleanup-action@v1
+        with:
+          packages: samba-ad
+          delete-untagged: true
+          keep-n-tagged: 10
+          # latest is the last release, main the rolling image; the version
+          # tags keep every release pullable
+          exclude-tags: latest,main,*.*.*,*.*
+          delete-ghost-images: true
+          delete-partial-images: true
+          validate: true
+          # Manual runs default to a dry run; the schedule passes no input
+          dry-run: ${{ inputs.dry_run || false }}
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # validate only warns, in a log nobody reads at two in the morning. This
+      # fails the run instead, which GitHub sends a mail about. Every child is
+      # fetched: a hollowed-out image still lists its platforms in the index.
+      - name: Verify the protected tags survived
+        run: |
+          rc=0
+          for tag in latest main; do
+            ref="ghcr.io/${{ github.repository }}:$tag"
+            if ! raw=$(docker buildx imagetools inspect --raw "$ref" 2>/dev/null); then
+              echo "  $ref -- absent, nothing to verify"
+              continue
+            fi
+            for d in $(jq -r '.manifests[]?.digest // empty' <<< "$raw"); do
+              if ! docker buildx imagetools inspect --raw "${ref%:*}@$d" > /dev/null 2>&1; then
+                echo "::error::$ref points at $d, which no longer exists"
+                rc=1
+              fi
+            done
+            echo "  $ref -- checked"
+          done
+          exit $rc
