@@ -34,6 +34,7 @@ cp .env.example .env
 | `SAMBA_BIND_INTERFACES_ONLY` | `yes` (default): Samba listens on the addresses of `SAMBA_INTERFACE` only; `no`: on every address of the host |
 | `SAMBA_DNS_FORWARDER` | Optional: forwarders for external names (space-separated) |
 | `SAMBA_LOG_LEVEL` | Log level of Samba, `0` to `10`, defaults to `1`. The [SADM agent](#sadm-agent) follows it |
+| `SAMBA_LETSENCRYPT` | `yes` obtains a certificate from Let's Encrypt, see [Let's Encrypt certificate](#lets-encrypt-certificate); defaults to `no`. The `ACME_*` settings are described there |
 | `SADM_AGENT` | `yes` starts the [SADM agent](#sadm-agent); defaults to `no` |
 | `TZ` | Time zone, defaults to `UTC` |
 
@@ -74,10 +75,16 @@ A check script for keepalived that follows the DNS service:
 /usr/bin/nc -z -w 1 127.0.0.1 53
 ```
 
-### LDAP through the virtual address
+### Central LDAP/LDAPS names
 
-By default Samba listens on the addresses of `SAMBA_INTERFACE` only, so LDAP,
-Kerberos and SMB are not reachable through the virtual address. With
+Applications can reach LDAP (389, also with StartTLS) and LDAPS (636) under
+one name that follows the virtual address, e.g. `ldap://ldap.example.net`
+and `ldaps://ldap.example.net`, or under one name each. Three things make
+this work.
+
+**Samba listens on the virtual address.** By default Samba listens on the
+addresses of `SAMBA_INTERFACE` only, so LDAP, Kerberos and SMB are not
+reachable through the virtual address. With
 
 ```sh
 SAMBA_BIND_INTERFACES_ONLY=no
@@ -85,17 +92,36 @@ SAMBA_BIND_INTERFACES_ONLY=no
 
 Samba listens on every address of the host, including the virtual address
 while the host holds it. The DNS registration still follows
-`SAMBA_INTERFACE`. Give the virtual address a name once; the record is
-replicated to all DCs:
+`SAMBA_INTERFACE`.
+
+**The names resolve to the virtual address.** The names do not have to lie
+in the realm: `ldap.example.net` for the realm `example.lan` is fine. Create
+an A record for each name pointing to the virtual address, once, where the
+domain of the name is served:
+
+- In a public zone, e.g. at Cloudflare. A private address is allowed there.
+  At Cloudflare the record has to be **DNS only**: the Cloudflare proxy
+  forwards HTTP, not LDAP.
+- In an internal zone of the same name (split DNS).
+- For a name inside the realm, in the AD zone; the record is replicated to
+  all DCs:
+
+  ```sh
+  docker compose exec samba-dc samba-tool dns add dc1 example.lan ldap A 192.168.1.100 -UAdministrator
+  ```
+
+  Let's Encrypt cannot issue a certificate for a private realm such as
+  `example.lan`; use a [custom certificate](#custom-tls-certificate) then.
+
+**The certificate carries the names.** Each DC generates a self-signed
+certificate for its own host name, which matches none of them. Either let
+the DC obtain one from [Let's Encrypt](#lets-encrypt-certificate), or use a
+[custom certificate](#custom-tls-certificate).
+
+Let keepalived follow both LDAP services as well:
 
 ```sh
-docker compose exec samba-dc samba-tool dns add dc1 example.lan ldap A 192.168.1.100 -UAdministrator
-```
-
-and let keepalived follow the LDAP service as well:
-
-```sh
-/usr/bin/nc -z -w 1 127.0.0.1 389
+/usr/bin/nc -z -w 1 127.0.0.1 389 && /usr/bin/nc -z -w 1 127.0.0.1 636
 ```
 
 Limits that no setting removes:
@@ -111,13 +137,106 @@ Limits that no setting removes:
 - Referrals and the `dnsHostName` attribute name the real DCs, whose fixed
   addresses must be reachable for clients that follow them.
 - Open connections break on a failover; the application has to reconnect.
+- Samba has one certificate and presents it under every name. A certificate
+  that carries the central names only does not match the DC's own host name;
+  clients that address a DC directly and check the name fail. Domain members
+  use LDAP with signing and are not affected. A SADM server accepts such a
+  certificate for a DC once the central names are listed in its
+  `directory.serviceUrls`.
+
+### Let's Encrypt certificate
+
+A DC can obtain a certificate for the central names from Let's Encrypt
+itself and renew it before it expires. The challenge is answered through the
+DNS (DNS-01) with Cloudflare's API, so the names need not be reachable from
+the internet; only their domain has to be at Cloudflare. It is independent of
+the realm.
+
+Requirements:
+
+- The names lie in a domain whose DNS is served by Cloudflare.
+- A Cloudflare API token with the permissions **Zone / DNS / Edit** and
+  **Zone / Zone / Read**, restricted to the zones of these names
+  (*My Profile → API Tokens → Create Token*, template "Edit zone DNS").
+- No certificate in `tls/`: the two exclude each other.
+
+Put the token into `acme.env` next to `compose.yaml`; it is not committed:
+
+```sh
+cp acme.env.example acme.env
+chmod 600 acme.env
+```
+
+```sh
+CLOUDFLARE_DNS_API_TOKEN=...
+```
+
+and switch Let's Encrypt on in `.env`:
+
+```sh
+SAMBA_LETSENCRYPT=yes
+ACME_DOMAINS=ldap.example.net
+ACME_EMAIL=hostmaster@example.net
+```
+
+| Variable | Meaning |
+|---|---|
+| `SAMBA_LETSENCRYPT` | `yes` obtains and renews the certificate; defaults to `no` |
+| `ACME_DOMAINS` | Names in the certificate, space-separated; the first becomes the common name. One name for LDAP and LDAPS or one each, e.g. `ldap.example.net ldaps.example.net` |
+| `ACME_EMAIL` | Contact address of the Let's Encrypt account |
+| `ACME_SERVER` | Optional ACME directory; empty means Let's Encrypt. `https://acme-staging-v02.api.letsencrypt.org/directory` for a test |
+| `ACME_KEY_TYPE` | `rsa2048` (default) or `ec256`. RSA works with older LDAP clients as well |
+| `ACME_PROPAGATION_SECONDS` | Seconds to wait for the TXT record before Let's Encrypt checks it; defaults to `30` |
+
+Recreate the container:
+
+```sh
+docker compose up -d
+```
+
+What happens then:
+
+- Samba never waits for the certificate. Until the first one is issued it
+  uses a temporary self-signed certificate for the same names, and switches
+  as soon as the real one is there.
+- certbot runs as a further program of supervisord and checks the
+  certificate at the start and then every 12 to 13 hours. It renews it once a
+  third of its lifetime is left (30 of 90 days today); the threshold follows
+  shorter lifetimes by itself. A changed `ACME_DOMAINS` takes effect at the
+  next start.
+- Samba's LDAP server loads a new certificate without a restart, for LDAPS
+  and StartTLS; open connections stay up.
+- If obtaining it fails, e.g. with a wrong token, the current certificate
+  stays in use, the log says why and the attempt is repeated after 5
+  minutes, then with growing distance up to 12 hours.
+- Account and certificates are kept in `letsencrypt/` next to
+  `compose.yaml`. `init.sh` does not delete it, so a DC provisioned anew
+  reuses the certificate instead of running into Let's Encrypt's rate
+  limits.
+
+The token reaches certbot only: Samba, BIND and the SADM agent are started
+without it. It is still visible in the container's configuration
+(`docker inspect`); to avoid that, mount it as a file (e.g. a Docker secret)
+and name the file in `CLOUDFLARE_DNS_API_TOKEN_FILE` instead.
+
+Test with the staging server first (`ACME_SERVER` above): its certificates
+are not trusted, but its rate limits are generous. Remove `letsencrypt/`
+before switching to the real one. Check the result from a client:
+
+```sh
+openssl s_client -connect ldap.example.net:636 </dev/null | grep -E "subject=|issuer=|Verify return code"
+openssl s_client -connect ldap.example.net:389 -starttls ldap </dev/null | grep "Verify return code"
+docker compose logs samba-dc | grep letsencrypt
+```
+
+Applications need no CA of their own for a Let's Encrypt certificate; the
+certificate stores of current systems trust it.
 
 ### Custom TLS certificate
 
-Each DC generates a self-signed certificate for its own host name, which does
-not match the name of a virtual address. To use your own certificate, place
-these files in the `tls` directory next to `compose.yaml` and restart the
-container:
+Instead of Let's Encrypt, e.g. for names inside a private realm, a
+certificate of your own can be used. Place these files in the `tls`
+directory next to `compose.yaml` and restart the container:
 
 | File | Content |
 |---|---|
@@ -384,11 +503,14 @@ settings, copy its folder from a domain controller that has it instead.
 | `compose.yaml` | Service definition and volumes |
 | `init.sh` | Initialization (`provision` / `join`) |
 | `tls/` | Optional custom certificate, see [Custom TLS certificate](#custom-tls-certificate) |
+| `acme.env` | Cloudflare API token for Let's Encrypt, not committed (template: `acme.env.example`), see [Let's Encrypt certificate](#lets-encrypt-certificate) |
+| `letsencrypt/` | Account and certificates of Let's Encrypt, created by the container, not committed |
 | `sadm-config.yaml` | Settings of the SADM agent, see [Agent settings](#agent-settings) |
 | `restore-gpo-folders.sh` | Creates missing group policy folders in the sysvol, see [Missing group policy folders](#missing-group-policy-folders) |
 | `.github/workflows/build.yml` | Builds and publishes the image |
 | `docker/Dockerfile` | Image with Samba, BIND, supervisord and the SADM agent |
 | `docker/entrypoint.sh` | Initialization and config generation at startup |
+| `docker/letsencrypt.sh` | Obtains, renews and installs the Let's Encrypt certificate |
 | `docker/*.j2` | Templates for `named.conf` and `smb.conf` |
 
 `smb.conf` and `named.conf` are regenerated from the templates on every

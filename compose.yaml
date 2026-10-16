@@ -17,6 +17,11 @@ services:
       - ${SAMBA_REALM}
     extra_hosts:
       - ${SAMBA_HOST_NAME}.${SAMBA_REALM} ${SAMBA_HOST_NAME}:${SAMBA_HOST_ADDRESS}
+    # Optional: the Cloudflare API token for Let's Encrypt, see
+    # "Let's Encrypt certificate" in README.md
+    env_file:
+      - path: ./acme.env
+        required: false
     environment:
       PEER_SERVER: ${SAMBA_PEER_SERVER:-}
       INTERFACES: ${SAMBA_INTERFACE:-}
@@ -28,6 +33,13 @@ services:
       BIND_INTERFACES_ONLY: ${SAMBA_BIND_INTERFACES_ONLY:-yes}
       DNS_FORWARDER: ${SAMBA_DNS_FORWARDER:-}
       LOG_LEVEL: ${SAMBA_LOG_LEVEL:-1}
+      # Optional Let's Encrypt certificate, see "Let's Encrypt certificate" in README.md
+      LETSENCRYPT: ${SAMBA_LETSENCRYPT:-no}
+      ACME_DOMAINS: ${ACME_DOMAINS:-}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+      ACME_SERVER: ${ACME_SERVER:-}
+      ACME_KEY_TYPE: ${ACME_KEY_TYPE:-rsa2048}
+      ACME_PROPAGATION_SECONDS: ${ACME_PROPAGATION_SECONDS:-30}
       # Optional SADM agent, see "SADM agent" in README.md
       SADM_AGENT: ${SADM_AGENT:-no}
       SADM_SERVER_URL: ${SADM_SERVER_URL:-}
@@ -37,6 +49,9 @@ services:
     volumes:
       # Optional custom certificate: cert.pem, key.pem and ca.pem
       - ./tls:/tls:ro
+      # Let's Encrypt: account and certificates. A directory of the host, so
+      # that init.sh (docker compose down -v) does not delete it
+      - ./letsencrypt:/var/lib/acme
       # Settings of the SADM agent; writable, the agent may store serverUrl
       - ./sadm-config.yaml:/etc/sadm-client/config.yaml
       - samba-ad-etc:/etc/samba

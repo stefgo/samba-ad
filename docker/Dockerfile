@@ -7,7 +7,12 @@ FROM debian:trixie
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-ENV ADMIN_PASSWORD="" \
+ENV ACME_DOMAINS="" \
+    ACME_EMAIL="" \
+    ACME_KEY_TYPE=rsa2048 \
+    ACME_PROPAGATION_SECONDS=30 \
+    ACME_SERVER="" \
+    ADMIN_PASSWORD="" \
     ALLOW_DNS_UPDATES=secure \
     BIND_HOST_IP=127.0.0.1 \
     BIND_INTERFACES_ONLY=yes \
@@ -16,6 +21,7 @@ ENV ADMIN_PASSWORD="" \
     DOMAIN_ACTION="" \
     DOMAIN_MASTER=no \
     INTERFACES="" \
+    LETSENCRYPT=no \
     LOG_LEVEL=1 \
     MODEL=standard \
     NETBIOS_NAME="" \
@@ -39,6 +45,8 @@ RUN echo "deb http://deb.debian.org/debian trixie-backports main" \
       samba-ad-provision samba-client winbind \
     # Samba's Python modules; the SADM agent reads the local database with them
       python3-samba \
+    # Optional Let's Encrypt certificate; lego in Debian lacks Cloudflare
+ && apt-get install -y certbot python3-certbot-dns-cloudflare openssl \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
 
@@ -50,7 +58,8 @@ COPY --from=sadm-client /opt/sadm-client /opt/sadm-client
 
 COPY *.j2 /root/
 COPY supervisord.conf /etc
-COPY --chmod=0755 entrypoint.sh /usr/local/bin/
+COPY letsencrypt.conf /etc/supervisor/
+COPY --chmod=0755 entrypoint.sh letsencrypt.sh /usr/local/bin/
 
 HEALTHCHECK --interval=5s --timeout=3s --retries=60 CMD nc -z localhost 445 || exit 1
 
