@@ -71,16 +71,19 @@ job prunes untagged and old `sha-*` images.
 
 The SADM agent comes from `ghcr.io/stefgo/sadm-client:main`
 (`SADM_CLIENT_TAG` in the Dockerfile); pin it to a release tag once
-sadm-client publishes releases. The actions are pinned to major versions
-(`@v7`) and take minor updates by themselves; a new major version and the
-pinned versions in `docs/requirements.txt` are raised by hand.
+sadm-client publishes releases. Dependabot proposes updates of the GitHub
+Actions once a month in one pull request, which `dependabot-auto-merge.yml`
+merges once its checks are green; the versions in `docs/requirements.txt` are
+raised by hand.
 
 ## Branches
 
-The project works without pull requests. Work happens on local branches,
-which are merged into `main` locally; only `main` is pushed. A ruleset of the
-repository ("Only main") refuses every other branch on GitHub. Tools that
-need branches of their own, such as Dependabot, are therefore not used.
+The project works without pull requests, like the other stefgo projects.
+Work happens on local branches, which are merged into `main` locally; only
+`main` and tags are pushed. `.githooks/pre-push` refuses every other branch;
+it is active once `git config core.hooksPath .githooks` is set (see
+[Releases](#releases)). The one exception are Dependabot's pull requests,
+which are merged automatically.
 
 ## Checks
 
