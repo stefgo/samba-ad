@@ -1,0 +1,25 @@
+#!/bin/bash
+
+# Only main and tags are pushed; every other branch stays local and is merged
+# into main locally. Checks the target of each pushed ref, not the branch that
+# is checked out, so "git push origin topic" from main is refused as well.
+#
+# Activated with: git config core.hooksPath .githooks
+
+refused=()
+while read -r _ _ remote_ref _; do
+  case "$remote_ref" in
+    refs/heads/main | refs/tags/*) ;;
+    *) refused+=("${remote_ref#refs/heads/}") ;;
+  esac
+done
+
+if [ ${#refused[@]} -gt 0 ]; then
+  cat >&2 <<MSG
+Only main and tags are pushed. Refused: ${refused[*]}
+
+Merge the branch into main locally and push main:
+  git checkout main && git merge --no-ff <branch> && git push
+MSG
+  exit 1
+fi

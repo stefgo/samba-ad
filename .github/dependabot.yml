@@ -1,0 +1,23 @@
+# Only the actions. A pinned action does not age loudly: it keeps working until
+# the runner drops the version, and then a workflow nobody touched fails. One
+# grouped pull request a month is the cheapest way to notice.
+#
+# This repository is maintained without pull requests, so a monthly one would
+# simply wait; dependabot-auto-merge.yml merges it once its checks are green.
+# The same setup as the other stefgo projects; with no dev branch here, the
+# target is main.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    # One pull request for all of them rather than one per action
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      # .githooks/commit-msg does not run for Dependabot; ci releases nothing
+      prefix: ci
+    labels:
+      - dependencies

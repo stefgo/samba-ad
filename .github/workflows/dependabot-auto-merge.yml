@@ -1,0 +1,36 @@
+# Dependabot's answer to an outdated action is a pull request, and this
+# repository is maintained without pull requests. An update that is opened and
+# never merged is not a slower update, it is none.
+#
+# So the merge happens here. The gate is the pull request's own ci.yml run, and
+# --auto is what waits for it: a red run leaves the pull request open and
+# visible, which is the case that wants a human anyway.
+name: Merge Dependency Updates
+
+on:
+  pull_request:
+
+# Per pull request. Dependabot force-pushes its branch when it rebases, and the
+# run for the superseded head has nothing left to say.
+concurrency:
+  group: dependabot-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  merge:
+    # A pull request from anyone else is not touched; the job is skipped
+    if: github.actor == 'dependabot[bot]'
+    name: Merge once the checks are green
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # merge the pull request
+      pull-requests: write # ... and put it into auto-merge
+    steps:
+      # Needs "Allow auto-merge" under Settings -> General -> Pull Requests.
+      # Without it this fails loudly, the intended failure mode: merging
+      # unchecked would be worse than the backlog it replaces.
+      - name: Enable auto-merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --auto --squash "$PR_URL"
