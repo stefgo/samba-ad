@@ -30,7 +30,8 @@ At every start the log shows the versions and the effective settings:
 docker compose logs samba-dc | grep -A 16 "Starting the domain controller"
 ```
 
-Docker's health check tests DNS, Kerberos, LDAP and SMB every 30 seconds;
+Docker's health check tests every 30 seconds that BIND and Samba run and that
+DNS, Kerberos, LDAP and SMB answer;
 `docker compose ps` shows the result, `docker inspect samba-dc` the output.
 
 ## Update

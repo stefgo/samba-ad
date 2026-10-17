@@ -1,6 +1,14 @@
 #!/bin/bash
-# Health check of the container: BIND and the main services of Samba answer
-# on the host address. Docker shows the output with "docker inspect".
+# Health check of the container: supervisord reports BIND and Samba as
+# running, and DNS and the main services of Samba answer on the host address.
+# Docker shows the output with "docker inspect".
+
+status=$(supervisorctl status bind samba 2>&1)
+starting=$(awk '$2 != "RUNNING" {print $1 " is " $2}' <<< "$status")
+if [ -n "$starting" ]; then
+  echo "${starting//$'\n'/, }"
+  exit 1
+fi
 
 failed=()
 for port in 53 88 389 445; do
@@ -12,4 +20,4 @@ if [ ${#failed[@]} -gt 0 ]; then
   echo "No answer on $SAMBA_HOST_ADDRESS port ${failed[*]} (53 DNS, 88 Kerberos, 389 LDAP, 445 SMB)"
   exit 1
 fi
-echo "DNS, Kerberos, LDAP and SMB answer"
+echo "BIND and Samba run; DNS, Kerberos, LDAP and SMB answer"

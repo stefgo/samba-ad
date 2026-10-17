@@ -64,6 +64,8 @@ for program in "${programs[@]}"; do
   state=$(awk -v p="$program" '$1 == p {print $2}' <<< "$status")
   if [ "$state" == RUNNING ]; then
     ok "$program is running"
+  elif [ "$state" == STARTING ]; then
+    notice "$program is still starting; run diagnose again in a few seconds"
   else
     bad "$program is ${state:-unknown}" \
       "Its messages: docker compose logs samba-dc | grep -i $program" \
