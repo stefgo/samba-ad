@@ -43,7 +43,8 @@ The name of the domain controller is the host name of the host.
 | Setting | Default | Meaning |
 |---|---|---|
 | `SAMBA_INTERFACES` | `127.0.0.1/8` and `SAMBA_HOST_ADDRESS` with its prefix | Addresses Samba listens on and registers in DNS, with prefix length. Fixed addresses only, no interface names |
-| `SAMBA_VIRTUAL_ADDRESSES` | none | [Virtual addresses](virtual-address.md): BIND answers on them as well, haproxy serves [LDAP and the Global Catalog](virtual-address.md#central-ldap-names) there |
+| `SAMBA_DNS_VIRTUAL_ADDRESSES` | none | [Virtual addresses](virtual-address.md) on which BIND answers DNS as well |
+| `SAMBA_LDAP_VIRTUAL_ADDRESSES` | none | [Virtual addresses](virtual-address.md) on which haproxy serves [LDAP and the Global Catalog](virtual-address.md#central-ldap-names); independent of `SAMBA_DNS_VIRTUAL_ADDRESSES`, an address may be in both |
 
 ### Let's Encrypt and SADM agent
 

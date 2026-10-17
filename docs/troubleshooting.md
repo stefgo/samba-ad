@@ -23,7 +23,8 @@ domain. Run `./init.sh provision` or `./init.sh join` first, see
 `SAMBA_HOST_ADDRESS … is not an address of this host` — the address in
 `.env` is not configured on any interface of the host. The message lists
 the addresses the host has. Use the fixed address of the host; a virtual
-address belongs in `SAMBA_VIRTUAL_ADDRESSES`. The same applies to every
+address belongs in `SAMBA_DNS_VIRTUAL_ADDRESSES` or
+`SAMBA_LDAP_VIRTUAL_ADDRESSES`. The same applies to every
 address in `SAMBA_INTERFACES`.
 
 ### Host name is not suitable

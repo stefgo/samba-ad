@@ -1,8 +1,9 @@
 #!/bin/bash -e
 #
-# The Let's Encrypt certificate of the virtual addresses. haproxy serves it
-# for LDAPS and the Global Catalog over TLS on SAMBA_VIRTUAL_ADDRESSES; Samba
-# keeps its own certificate for the host names and never sees this one.
+# The Let's Encrypt certificate of the virtual LDAP addresses. haproxy serves
+# it for LDAPS and the Global Catalog over TLS on
+# SAMBA_LDAP_VIRTUAL_ADDRESSES; Samba keeps its own certificate for the host
+# names and never sees this one.
 #
 #   letsencrypt.sh install  Write the certificate for haproxy; until one is
 #                           issued, a temporary self-signed one for the same

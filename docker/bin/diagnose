@@ -59,7 +59,7 @@ section "Programs"
 status=$(supervisorctl status 2>&1)
 programs=(bind samba)
 if [ "$SADM_AGENT" == yes ]; then programs+=(sadm-client); fi
-if [ -n "$SAMBA_VIRTUAL_ADDRESSES" ]; then programs+=(vip-proxy); fi
+if [ -n "$SAMBA_LDAP_VIRTUAL_ADDRESSES" ]; then programs+=(vip-proxy); fi
 if [ "$SAMBA_LETSENCRYPT" == yes ]; then programs+=(letsencrypt); fi
 for program in "${programs[@]}"; do
   state=$(awk -v p="$program" '$1 == p {print $2}' <<< "$status")
@@ -84,9 +84,23 @@ for entry in "53 DNS" "88 Kerberos" "389 LDAP" "445 SMB" "636 LDAPS" "3268 Globa
       "Look for errors at the start in: docker compose logs samba-dc"
   fi
 done
-for vip in $SAMBA_VIRTUAL_ADDRESSES; do
+for vip in $SAMBA_DNS_VIRTUAL_ADDRESSES; do
   if host_address_entry "$vip" >/dev/null; then
-    ok "This host holds the virtual address $vip"
+    ok "This host holds the virtual DNS address $vip"
+    if nc -z -w 3 "$vip" 53 2>/dev/null; then
+      ok "DNS answers on $vip:53"
+    else
+      bad "DNS does not answer on $vip:53" \
+        "Its messages: docker compose logs samba-dc | grep -i named" \
+        "docs:virtual-address/"
+    fi
+  else
+    ok "The virtual DNS address $vip is held by another host (or nobody)"
+  fi
+done
+for vip in $SAMBA_LDAP_VIRTUAL_ADDRESSES; do
+  if host_address_entry "$vip" >/dev/null; then
+    ok "This host holds the virtual LDAP address $vip"
     failed=()
     for port in $VIP_PORTS; do
       if ! nc -z -w 3 "$vip" "$port" 2>/dev/null; then
@@ -101,7 +115,7 @@ for vip in $SAMBA_VIRTUAL_ADDRESSES; do
         "docs:virtual-address/#central-ldap-names"
     fi
   else
-    ok "The virtual address $vip is held by another host (or nobody)"
+    ok "The virtual LDAP address $vip is held by another host (or nobody)"
   fi
 done
 
@@ -124,7 +138,8 @@ else
     "docs:troubleshooting/#dns-records-are-missing"
 fi
 domain_addresses=" $(dns -t A "$DNS_DOMAIN" | tr '\n' ' ')"
-for vip in $SAMBA_VIRTUAL_ADDRESSES; do
+vips=$(tr ' ' '\n' <<< "$SAMBA_DNS_VIRTUAL_ADDRESSES $SAMBA_LDAP_VIRTUAL_ADDRESSES" | sort -u)
+for vip in $vips; do
   if [[ " $addresses $domain_addresses" == *" $vip "* ]]; then
     bad "The virtual address $vip is registered in DNS as address of a DC" \
       "Remove it: samba-tool dns delete <DC> $DNS_DOMAIN <name> A $vip -UAdministrator" \
@@ -208,9 +223,9 @@ else
 fi
 if [ "$SAMBA_LETSENCRYPT" == yes ]; then
   if [ -f /etc/haproxy/certs/vip.pem ]; then
-    check_certificate "The certificate of the virtual addresses" /etc/haproxy/certs/vip.pem
+    check_certificate "The certificate of the virtual LDAP addresses" /etc/haproxy/certs/vip.pem
   else
-    bad "haproxy has no certificate for the virtual addresses" \
+    bad "haproxy has no certificate for the virtual LDAP addresses" \
       "Its messages: docker compose logs samba-dc | grep letsencrypt" "docs:tls/#lets-encrypt"
   fi
 fi

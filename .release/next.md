@@ -24,8 +24,8 @@ Documentation: https://stefgo.github.io/samba-ad/
   `restore-gpo-folders`, `check` and `version`.
 - **Samba's defaults:** `smb.conf` sets only what the image needs, so that Samba updates
   bring their defaults along (e.g. the `ft_scanner` service of Samba 4.24).
-- **Virtual addresses:** BIND answers on the addresses of a VRRP pair as well, haproxy
-  serves LDAP and the Global Catalog there.
+- **Virtual addresses:** BIND answers on the DNS addresses of a VRRP pair as well, haproxy
+  serves LDAP and the Global Catalog on its LDAP addresses; both lists are independent.
 - **Certificates:** Samba's own or an own certificate for the host names; optionally a
   Let's Encrypt certificate (DNS-01 over Cloudflare) for central names on the virtual
   addresses, served by haproxy and renewed without a restart.
@@ -37,9 +37,10 @@ Documentation: https://stefgo.github.io/samba-ad/
 
 The volumes stay; `.env` has to be adapted, `docker compose up -d` then starts as before.
 
-- Renamed in `.env`: `SAMBA_INTERFACE` → `SAMBA_INTERFACES`, `SAMBA_VIRTUAL_ADDRESS` →
-  `SAMBA_VIRTUAL_ADDRESSES`, `SAMBA_DNS_FORWARDER` → `SAMBA_DNS_FORWARDERS`, `WORKGROUP` →
-  `SAMBA_WORKGROUP`. `SAMBA_HOST_NAME` is gone: the host name of the host is used.
+- Renamed in `.env`: `SAMBA_INTERFACE` → `SAMBA_INTERFACES`, `SAMBA_DNS_FORWARDER` →
+  `SAMBA_DNS_FORWARDERS`, `WORKGROUP` → `SAMBA_WORKGROUP`. `SAMBA_VIRTUAL_ADDRESS` is split
+  into `SAMBA_DNS_VIRTUAL_ADDRESSES` (BIND) and `SAMBA_LDAP_VIRTUAL_ADDRESSES` (haproxy);
+  set both to the old address to keep its behaviour. `SAMBA_HOST_NAME` is gone: the host name of the host is used.
 - Take `compose.yaml` and `init.sh` from this release; `restore-gpo-folders.sh` is now a
   command of the image (`docker compose exec samba-dc restore-gpo-folders`).
 - New, with the old behaviour as default: `SAMBA_LDAP_REQUIRE_STRONG_AUTH=no`.
@@ -53,10 +54,10 @@ The volumes stay; `.env` has to be adapted, `docker compose up -d` then starts a
 - The `YYYYMMDD` image tags are no longer produced; pin an `X.Y.Z` tag instead.
 - `SAMBA_BIND_INTERFACES_ONLY` is gone: Samba listens on `SAMBA_INTERFACES` only, and
   haproxy serves LDAP (389, 636) and the Global Catalog (3268, 3269) on
-  `SAMBA_VIRTUAL_ADDRESSES`. Remove the line from `.env`; the container warns about it
+  `SAMBA_LDAP_VIRTUAL_ADDRESSES`. Remove the line from `.env`; the container warns about it
   and about every other unknown `SAMBA_*` or `ACME_*` variable.
 - Let's Encrypt no longer replaces Samba's certificate: haproxy serves it on
-  `SAMBA_VIRTUAL_ADDRESSES` only, which it now requires. Clients that connect to a
+  `SAMBA_LDAP_VIRTUAL_ADDRESSES` only, which it now requires. Clients that connect to a
   domain controller by its host name get Samba's own certificate again.
 - No longer used: the volume `samba-dc-bind` (`docker volume rm samba-dc-bind`) and the
   files `netlogon.conf` and `sysvol.conf` below `/etc/samba/conf.d` (delete them).
