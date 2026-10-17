@@ -11,7 +11,10 @@ docker compose up -d
 The container checks the settings at every start and refuses to start with
 a message that names the wrong value. `docker compose run --rm samba-dc
 check` runs the same checks and shows the effective settings without
-starting anything.
+starting anything. A variable starting with `SAMBA_` or `ACME_` that is no
+setting, e.g. a misspelled or removed one, causes a warning in the log
+(`SADM_*` variables are passed to the [SADM agent](sadm-agent.md) and not
+checked).
 
 ## Required
 
@@ -39,9 +42,8 @@ The name of the domain controller is the host name of the host.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `SAMBA_INTERFACES` | `127.0.0.1/8` and `SAMBA_HOST_ADDRESS` with its prefix | Addresses Samba uses and registers in DNS, with prefix length. Fixed addresses only, no interface names |
-| `SAMBA_BIND_INTERFACES_ONLY` | `yes` | `no` lets Samba listen on every address of the host, e.g. for LDAP on a [virtual address](virtual-address.md#without-lets-encrypt) without Let's Encrypt. With `SAMBA_LETSENCRYPT=yes` it must stay `yes` |
-| `SAMBA_VIRTUAL_ADDRESSES` | none | [Virtual addresses](virtual-address.md) BIND answers on as well |
+| `SAMBA_INTERFACES` | `127.0.0.1/8` and `SAMBA_HOST_ADDRESS` with its prefix | Addresses Samba listens on and registers in DNS, with prefix length. Fixed addresses only, no interface names |
+| `SAMBA_VIRTUAL_ADDRESSES` | none | [Virtual addresses](virtual-address.md): BIND answers on them as well, haproxy serves [LDAP and the Global Catalog](virtual-address.md#central-ldap-names) there |
 
 ### Let's Encrypt and SADM agent
 
