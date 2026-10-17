@@ -1,0 +1,8 @@
+# Builds the image locally instead of pulling it:
+#   docker compose -f compose.yaml -f compose.build.yaml build
+services:
+  samba-dc:
+    build:
+      context: ./docker
+      args:
+        IMAGE_VERSION: local

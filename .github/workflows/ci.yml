@@ -1,4 +1,5 @@
-# Lints the shell scripts and the Dockerfile. Runs on every branch and pull
+# Lints the shell scripts, the Dockerfile and compose.yaml, and builds the
+# documentation. Runs on every branch and pull
 # request; release.yml calls the same workflow, so a release is gated by
 # exactly these checks.
 name: Check Code
@@ -26,7 +27,39 @@ jobs:
 
       # Preinstalled on the runner
       - name: shellcheck
-        run: shellcheck init.sh restore-gpo-folders.sh docker/*.sh .githooks/*
+        run: |
+          shellcheck -x init.sh tests/*.sh .githooks/* docker/lib/*.sh \
+            docker/bin/entrypoint.sh docker/bin/letsencrypt.sh docker/bin/diagnose \
+            docker/bin/healthcheck docker/bin/backup
+
+      - name: Python syntax
+        run: python3 -m py_compile docker/bin/restore-gpo-folders docker/lib/render-template
 
       - name: hadolint
         run: docker run --rm -i hadolint/hadolint < docker/Dockerfile
+
+      # With the values of the template, as a new installation has them
+      - name: compose.yaml
+        run: cp .env.example .env && docker compose config -q
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: docs/requirements.txt
+
+      - run: pip install -r docs/requirements.txt
+
+      # --strict fails on broken links and anchors within the documentation
+      - run: mkdocs build --strict
+
+      # The error messages of the image link into the documentation
+      - run: tests/check-doc-links.sh site

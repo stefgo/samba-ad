@@ -1,0 +1,74 @@
+#!/usr/bin/python3
+"""Creates missing group policy folders in the sysvol of this DC.
+
+Samba does not replicate the sysvol, so a group policy the directory knows
+can lack its folder below sysvol/<realm>/Policies, e.g. after a join. This
+creates {GUID}/GPT.INI with the version the directory names and the empty
+MACHINE and USER folders -- what "samba-tool domain provision" creates -- and
+then resets the ACLs of the sysvol. A folder that exists is left alone.
+
+  docker compose exec samba-dc restore-gpo-folders           show what is missing
+  docker compose exec samba-dc restore-gpo-folders --apply   create it
+  restore-gpo-folders --check                                exit 1 if something is missing
+
+The created folders hold no policy settings. Copy the folder of a policy
+that has settings from a DC that has it instead.
+"""
+
+import os
+import subprocess
+import sys
+
+from samba.auth import system_session
+from samba.param import LoadParm
+from samba.samdb import SamDB
+
+args = sys.argv[1:]
+if args not in ([], ["--apply"], ["--check"]):
+    print(__doc__.strip(), file=sys.stderr)
+    sys.exit(2)
+apply = args == ["--apply"]
+check = args == ["--check"]
+
+lp = LoadParm()
+lp.load_default()
+db = SamDB(session_info=system_session(), lp=lp)
+
+policies = os.path.join(lp.get("path", "sysvol"), db.domain_dns_name().lower(), "Policies")
+if not check:
+    print("sysvol policies:", policies)
+
+missing = []
+for msg in db.search("CN=Policies,CN=System," + str(db.domain_dn()),
+                     expression="(objectClass=groupPolicyContainer)",
+                     attrs=["cn", "displayName", "versionNumber"]):
+    guid = str(msg["cn"][0])
+    name = str(msg.get("displayName", idx=0) or guid)
+    version = int(str(msg.get("versionNumber", idx=0) or 0))
+    folder = os.path.join(policies, guid)
+
+    if os.path.isdir(folder):
+        if not check:
+            print(f"present   {guid}  {name}")
+        continue
+    missing.append(guid)
+    if check:
+        print(f"missing   {guid}  {name}")
+    elif not apply:
+        print(f"missing   {guid}  {name}  -> would create with Version={version}")
+    else:
+        for sub in ("MACHINE", "USER"):
+            os.makedirs(os.path.join(folder, sub), 0o775, exist_ok=True)
+        with open(os.path.join(folder, "GPT.INI"), "w", newline="") as f:
+            f.write(f"[General]\r\nVersion={version}\r\n")
+        print(f"created   {guid}  {name}  Version={version}")
+
+if check:
+    sys.exit(1 if missing else 0)
+if not missing:
+    print("Nothing to do.")
+elif not apply:
+    print("Nothing changed. Run again with --apply to create the missing folders.")
+else:
+    print("Resetting the ACLs of the sysvol: samba-tool ntacl sysvolreset")
+    subprocess.run(["samba-tool", "ntacl", "sysvolreset"], check=True)

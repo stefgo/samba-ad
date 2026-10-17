@@ -1,67 +1,43 @@
-services:
+# The domain controller. Its settings come from .env (template: .env.example).
+# Documentation: https://stefgo.github.io/samba-ad/
 
+services:
   samba-dc:
-    build: ./docker
-    image: ghcr.io/stefgo/samba-ad:latest
+    image: ghcr.io/stefgo/samba-ad:${SAMBA_IMAGE_TAG:-latest}
     container_name: samba-dc
     restart: unless-stopped
+    # Samba and BIND serve the addresses of the host directly
     network_mode: host
-    # Samba stores NT ACLs (e.g. for sysvol) in security.* xattrs
+    # Samba stores NT ACLs (e.g. of the sysvol) in security.* xattrs
     cap_add:
       - SYS_ADMIN
-    # Normal operation: the DC is its own DNS server.
-    # init.sh points SAMBA_DNS_SERVER to the peer during a join.
+    # The domain controller is its own DNS server
     dns:
-      - ${SAMBA_DNS_SERVER:-${SAMBA_HOST_ADDRESS}}
+      - ${SAMBA_HOST_ADDRESS:?set it in .env - template .env.example}
     dns_search:
-      - ${SAMBA_REALM}
-    extra_hosts:
-      - ${SAMBA_HOST_NAME}.${SAMBA_REALM} ${SAMBA_HOST_NAME}:${SAMBA_HOST_ADDRESS}
-    # Optional: the Cloudflare API token for Let's Encrypt, see
-    # "Let's Encrypt certificate" in README.md
+      - ${SAMBA_REALM:?set it in .env - template .env.example}
     env_file:
-      - path: ./acme.env
+      - .env
+      # Optional: the Cloudflare API token for Let's Encrypt
+      - path: acme.env
         required: false
-    environment:
-      PEER_SERVER: ${SAMBA_PEER_SERVER:-}
-      INTERFACES: ${SAMBA_INTERFACE:-}
-      REALM: ${SAMBA_REALM:-HOME.LAN}
-      TZ: ${TZ:-UTC}
-      WORKGROUP: ${WORKGROUP:-HOME}
-      BIND_HOST_IP: ${SAMBA_HOST_ADDRESS}
-      BIND_VIRTUAL_IPS: ${SAMBA_VIRTUAL_ADDRESS:-}
-      BIND_INTERFACES_ONLY: ${SAMBA_BIND_INTERFACES_ONLY:-yes}
-      DNS_FORWARDER: ${SAMBA_DNS_FORWARDER:-}
-      LOG_LEVEL: ${SAMBA_LOG_LEVEL:-1}
-      # Optional Let's Encrypt certificate, see "Let's Encrypt certificate" in README.md
-      LETSENCRYPT: ${SAMBA_LETSENCRYPT:-no}
-      ACME_DOMAINS: ${ACME_DOMAINS:-}
-      ACME_EMAIL: ${ACME_EMAIL:-}
-      ACME_SERVER: ${ACME_SERVER:-}
-      ACME_KEY_TYPE: ${ACME_KEY_TYPE:-rsa2048}
-      ACME_PROPAGATION_SECONDS: ${ACME_PROPAGATION_SECONDS:-30}
-      # Optional SADM agent, see "SADM agent" in README.md
-      SADM_AGENT: ${SADM_AGENT:-no}
-      SADM_SERVER_URL: ${SADM_SERVER_URL:-}
-      SADM_REGISTRATION_TOKEN: ${SADM_REGISTRATION_TOKEN:-}
-      SADM_ALLOW_SELF_SIGNED: ${SADM_ALLOW_SELF_SIGNED:-}
-      SADM_CLIENT_CONFIG: /etc/sadm-client/config.yaml
+    # Time for Samba to close its databases
+    stop_grace_period: 30s
     volumes:
-      # Optional custom certificate: cert.pem, key.pem and ca.pem
+      - samba-dc-etc:/etc/samba
+      - samba-dc-lib:/var/lib/samba
+      # Optional own certificate: cert.pem, key.pem, ca.pem
       - ./tls:/tls:ro
-      # Let's Encrypt: account and certificates. A directory of the host, so
-      # that init.sh (docker compose down -v) does not delete it
+      # Let's Encrypt account and certificates; on the host, so that init.sh
+      # does not delete them
       - ./letsencrypt:/var/lib/acme
       # Settings of the SADM agent; writable, the agent may store serverUrl
       - ./sadm-config.yaml:/etc/sadm-client/config.yaml
-      - samba-ad-etc:/etc/samba
-      - samba-ad-lib:/var/lib/samba
-      - samba-bind:/var/bind
+      # Archives of the backup command
+      - ./backup:/backup
 
 volumes:
-  samba-ad-etc:
+  samba-dc-etc:
     name: samba-dc-etc
-  samba-ad-lib:
+  samba-dc-lib:
     name: samba-dc-lib
-  samba-bind:
-    name: samba-dc-bind

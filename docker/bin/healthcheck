@@ -1,0 +1,15 @@
+#!/bin/bash
+# Health check of the container: BIND and the main services of Samba answer
+# on the host address. Docker shows the output with "docker inspect".
+
+failed=()
+for port in 53 88 389 445; do
+  if ! nc -z -w 3 "$SAMBA_HOST_ADDRESS" "$port" 2>/dev/null; then
+    failed+=("$port")
+  fi
+done
+if [ ${#failed[@]} -gt 0 ]; then
+  echo "No answer on $SAMBA_HOST_ADDRESS port ${failed[*]} (53 DNS, 88 Kerberos, 389 LDAP, 445 SMB)"
+  exit 1
+fi
+echo "DNS, Kerberos, LDAP and SMB answer"
