@@ -18,68 +18,47 @@ set -euo pipefail
 # shellcheck source=docker/lib/common.sh
 . /usr/local/lib/samba-ad/common.sh
 
+# render <template> <file>: writes a file from a template in docker/templates
+render() {
+  /usr/local/lib/samba-ad/render-template "$1" "$2" ||
+    fail "$2 could not be written from $1 (see above)." \
+      "Report this at https://github.com/stefgo/samba-ad/issues"
+}
+
+# Writes smb.conf and named.conf from the templates in docker/templates. This
+# function only finds the values the templates need beyond the settings; the
+# text of both files is in the templates.
 write_configs() {
-  local entry entries
-
-  LISTEN_ON="127.0.0.1;"
-  for entry in $SAMBA_HOST_ADDRESS $SAMBA_VIRTUAL_ADDRESSES; do
-    LISTEN_ON+=" $entry;"
-  done
-  ALLOW_RECURSION=
-  for entry in $SAMBA_DNS_ALLOW_RECURSION; do
-    ALLOW_RECURSION+="$entry; "
-  done
-  ALLOW_RECURSION=${ALLOW_RECURSION% }
-  FORWARDERS=
-  if [ -n "$SAMBA_DNS_FORWARDERS" ]; then
-    read -ra entries <<< "$SAMBA_DNS_FORWARDERS"
-    FORWARDERS="    forwarders { $(printf '%s; ' "${entries[@]}")};"
-  fi
+  # Samba's DLZ module that matches the installed BIND
   DLZ_MODULE=$(dlz_module)
-  export LISTEN_ON ALLOW_RECURSION FORWARDERS DLZ_MODULE
-  # shellcheck disable=SC2016
-  envsubst '${LISTEN_ON} ${ALLOW_RECURSION} ${FORWARDERS} ${DLZ_MODULE}' \
-    < "$TEMPLATES/named.conf.tmpl" | cat -s > /etc/bind/named.conf
-  # BIND runs as user bind and keeps its session key here
-  install -d -o bind -g bind /run/named
 
-  # Samba insists on a private key that only root can read, so the mounted
-  # files are copied instead of being used in place.
-  TLS_OPTIONS=
+  # Where the certificate comes from: none (Samba generates one),
+  # letsencrypt or own. Samba insists on a private key that only root can
+  # read, so the mounted files are copied instead of being used in place.
+  TLS_SOURCE=none
   rm -rf /etc/samba/tls
   if [ "$SAMBA_LETSENCRYPT" == yes ]; then
     letsencrypt.sh install
-    # The chain is part of the certfile
-    TLS_OPTIONS=$'\ttls enabled = yes\n\ttls certfile = /etc/samba/tls/cert.pem\n\ttls keyfile = /etc/samba/tls/key.pem\n\ttls cafile ='
+    TLS_SOURCE=letsencrypt
   elif [ -f /tls/cert.pem ]; then
     mkdir -m 700 /etc/samba/tls
     install -m 644 /tls/cert.pem /etc/samba/tls/cert.pem
     install -m 600 /tls/key.pem /etc/samba/tls/key.pem
-    TLS_OPTIONS=$'\ttls enabled = yes\n\ttls certfile = /etc/samba/tls/cert.pem\n\ttls keyfile = /etc/samba/tls/key.pem'
     if [ -f /tls/ca.pem ]; then
       install -m 644 /tls/ca.pem /etc/samba/tls/ca.pem
-      TLS_OPTIONS+=$'\n\ttls cafile = /etc/samba/tls/ca.pem'
-    else
-      # Without this, Samba looks for its own generated CA and fails to start
-      TLS_OPTIONS+=$'\n\ttls cafile ='
     fi
+    TLS_SOURCE=own
   fi
+  export DLZ_MODULE TLS_SOURCE
 
   # /etc/samba exists, so -m applies to the only directory that is created
   # shellcheck disable=SC2174
   mkdir -p -m 700 /etc/samba/conf.d
-  INCLUDES=
-  for entry in /etc/samba/conf.d/*.conf; do
-    if [ -f "$entry" ]; then
-      INCLUDES+=$'\tinclude = '"$entry"$'\n'
-    fi
-  done
-  export TLS_OPTIONS INCLUDES
-  # shellcheck disable=SC2016
-  envsubst '${NETBIOS_NAME} ${REALM} ${SAMBA_WORKGROUP} ${SAMBA_INTERFACES}
-      ${SAMBA_BIND_INTERFACES_ONLY} ${SAMBA_LOG_LEVEL} ${SAMBA_LDAP_REQUIRE_STRONG_AUTH}
-      ${TLS_OPTIONS} ${INCLUDES} ${DNS_DOMAIN}' \
-    < "$TEMPLATES/smb.conf.tmpl" | cat -s > /etc/samba/smb.conf
+
+  render named.conf.j2 /etc/bind/named.conf
+  render smb.conf.j2 /etc/samba/smb.conf
+  # BIND runs as user bind and keeps its session key here
+  install -d -o bind -g bind /run/named
 
   ln -fns /var/lib/samba/private/krb5.conf /etc/krb5.conf
 

@@ -1,0 +1,41 @@
+#!/usr/bin/python3
+"""Writes a configuration file from a Jinja template of the image.
+
+  render-template <template> <output>
+
+<template> is a file in /usr/local/share/samba-ad. The template sees every
+environment variable by its name, e.g. {{ SAMBA_REALM }}, and the functions
+glob() and exists() of the file system. A name that is not set is an error.
+"""
+
+import glob
+import os
+import sys
+
+import jinja2
+
+TEMPLATES = "/usr/local/share/samba-ad"
+
+if len(sys.argv) != 3:
+    print(__doc__.strip(), file=sys.stderr)
+    sys.exit(2)
+template, output = sys.argv[1:]
+
+env = jinja2.Environment(
+    loader=jinja2.FileSystemLoader(TEMPLATES),
+    undefined=jinja2.StrictUndefined,
+    # A line with only a {% tag %} leaves no trace in the output
+    trim_blocks=True,
+    lstrip_blocks=True,
+    keep_trailing_newline=True,
+    autoescape=False,
+)
+env.globals.update(glob=lambda pattern: sorted(glob.glob(pattern)), exists=os.path.exists)
+
+try:
+    text = env.get_template(template).render(os.environ)
+except jinja2.TemplateError as e:
+    print(f"{template}: {e}", file=sys.stderr)
+    sys.exit(1)
+with open(output, "w") as f:
+    f.write(text)

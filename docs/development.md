@@ -9,7 +9,8 @@
 | `docker/Dockerfile` | The image: Debian, Samba from backports, BIND, supervisord, certbot, SADM agent |
 | `docker/bin/` | Commands of the image: `entrypoint.sh` (start, provision, join, check), `diagnose`, `backup`, `restore-gpo-folders`, `healthcheck`, `letsencrypt.sh` |
 | `docker/lib/common.sh` | Settings with their defaults, checks, messages |
-| `docker/templates/` | `smb.conf` and `named.conf`, filled in with `envsubst` at every start |
+| `docker/lib/render-template` | Writes a file from a Jinja template |
+| `docker/templates/` | Jinja templates of `smb.conf` and `named.conf`, written at every start |
 | `docker/supervisor/` | Programs of supervisord |
 | `tests/smoke-test.sh` | Sets up a test domain with an image and checks it |
 | `docs/`, `mkdocs.yml` | This documentation |
@@ -21,6 +22,9 @@ Design rules:
 - **Logic lives in the image**, not on the host: an image update brings
   fixes along without new files on the host. `init.sh` only guides through
   the setup.
+- **The text of a generated file lives in its template.** `entrypoint.sh`
+  only finds the values the templates need (e.g. `TLS_SOURCE`, `DLZ_MODULE`);
+  the templates see every setting of `.env` by its name.
 - **Every default is set once**, in `load_settings` in `docker/lib/common.sh`.
   `.env` and the container use the same names.
 - **Samba and BIND keep their defaults** unless a setting is needed and

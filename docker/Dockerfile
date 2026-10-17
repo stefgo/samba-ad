@@ -21,9 +21,10 @@ RUN echo "deb http://deb.debian.org/debian ${DEBIAN_RELEASE}-backports main" \
       > /etc/apt/sources.list.d/backports.list \
  && apt-get update \
  && apt-get upgrade -y \
-    # supervisord, Kerberos, BIND, and the tools of the scripts
+    # supervisord, Kerberos, BIND, and the tools of the scripts (Jinja for
+    # the templates of smb.conf and named.conf)
  && apt-get install -y supervisor krb5-config krb5-user bind9 bind9-dnsutils \
-      netcat-traditional iproute2 gettext-base \
+      netcat-traditional iproute2 python3-jinja2 \
     # Samba with its Python modules (the SADM agent and the scripts use them)
  && apt-get install -y -t "${DEBIAN_RELEASE}-backports" samba samba-ad-dc \
       samba-ad-provision samba-client winbind python3-samba \
