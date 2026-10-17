@@ -1,0 +1,26 @@
+# Proposes updates of the GitHub Actions and of the documentation tools. The
+# image needs none: debian:trixie and sadm-client:main are rolling tags, and
+# every build (at least weekly, see rebuild.yml) takes them and the current
+# Debian and Samba packages anew.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: /docs
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: docs
+    # MkDocs 2 drops plugins and themes; Material for MkDocs stays on 1.x
+    ignore:
+      - dependency-name: mkdocs
+        update-types: ["version-update:semver-major"]

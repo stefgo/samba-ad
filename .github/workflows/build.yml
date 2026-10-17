@@ -16,6 +16,7 @@ on:
     # Path filters apply to branch pushes only, never to tags or dispatches
     paths:
       - docker/**
+      - tests/**
       - .github/workflows/build.yml
   # Started by release.yml for a new tag and by rebuild.yml every week
   workflow_dispatch:
@@ -74,6 +75,10 @@ jobs:
           pull: true
           no-cache: true
           labels: ${{ steps.meta.outputs.labels }}
+          # Shown at start and by diagnose
+          build-args: |
+            IMAGE_VERSION=${{ github.ref_name }}
+            IMAGE_REVISION=${{ github.sha }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
 
       # The file name is the digest. Matrix jobs cannot each set an output of
@@ -93,8 +98,8 @@ jobs:
           retention-days: 1
 
   # A gate, not a report: nothing is tagged until the image of each
-  # architecture has run its tools. No domain is provisioned -- that needs a
-  # network setup a runner does not have.
+  # architecture has set up a test domain and answered on DNS, Kerberos and
+  # LDAP (tests/smoke-test.sh, which runs locally as well).
   smoke:
     name: Smoke test
     needs: build
@@ -111,6 +116,8 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     steps:
+      - uses: actions/checkout@v7
+
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -122,16 +129,17 @@ jobs:
           name: digests-${{ matrix.arch }}
           path: /tmp/digests
 
-      - name: Run the tools of the image
+      - name: Set up a test domain
+        run: tests/smoke-test.sh "$IMAGE@sha256:$(basename /tmp/digests/*)"
+
+      - name: Versions in the summary
         run: |
-          ref="$IMAGE@sha256:$(basename /tmp/digests/*)"
-          docker run --rm --entrypoint sh "$ref" -euc '
-            samba -V
-            samba-tool --version
-            named -v
-            certbot --version
-            echo "sadm-client $(/opt/sadm-client/bin/sadm-client --version)"
-          '
+          {
+            echo "### Versions (${{ matrix.arch }})"
+            echo '```'
+            docker run --rm "$IMAGE@sha256:$(basename /tmp/digests/*)" version
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # Turns the per-architecture digests into one multi-arch manifest list under
   # every tag computed here.
