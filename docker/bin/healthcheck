@@ -1,11 +1,11 @@
 #!/bin/bash
 # Health check of the container: supervisord reports BIND and Samba (and
-# haproxy with Let's Encrypt) as running, and DNS and the main services of
+# haproxy with virtual addresses) as running, and DNS and the main services of
 # Samba answer on the host address. Docker shows the output with "docker
 # inspect".
 
 programs=(bind samba)
-if [ "${SAMBA_LETSENCRYPT:-no}" == yes ]; then
+if [ -n "${SAMBA_VIRTUAL_ADDRESSES:-}" ]; then
   programs+=(vip-proxy)
 fi
 status=$(supervisorctl status "${programs[@]}" 2>&1)

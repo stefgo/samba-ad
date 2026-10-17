@@ -24,7 +24,8 @@ Documentation: https://stefgo.github.io/samba-ad/
   `restore-gpo-folders`, `check` and `version`.
 - **Samba's defaults:** `smb.conf` sets only what the image needs, so that Samba updates
   bring their defaults along (e.g. the `ft_scanner` service of Samba 4.24).
-- **Virtual addresses:** BIND answers on the addresses of a VRRP pair as well.
+- **Virtual addresses:** BIND answers on the addresses of a VRRP pair as well, haproxy
+  serves LDAP and the Global Catalog there.
 - **Certificates:** Samba's own or an own certificate for the host names; optionally a
   Let's Encrypt certificate (DNS-01 over Cloudflare) for central names on the virtual
   addresses, served by haproxy and renewed without a restart.
@@ -50,10 +51,12 @@ The volumes stay; `.env` has to be adapted, `docker compose up -d` then starts a
   list, and adds the missing `idmap_ldb:use rfc2307 = yes`. Samba runs in its default
   process model (prefork).
 - The `YYYYMMDD` image tags are no longer produced; pin an `X.Y.Z` tag instead.
-- Let's Encrypt no longer replaces Samba's certificate: it is served by haproxy on
-  `SAMBA_VIRTUAL_ADDRESSES` only, which it now requires, together with
-  `SAMBA_BIND_INTERFACES_ONLY=yes` (the default; set it back if `.env` says `no`).
-  Clients that connect to a domain controller by its host name get Samba's own
-  certificate again.
+- `SAMBA_BIND_INTERFACES_ONLY` is gone: Samba listens on `SAMBA_INTERFACES` only, and
+  haproxy serves LDAP (389, 636) and the Global Catalog (3268, 3269) on
+  `SAMBA_VIRTUAL_ADDRESSES`. Remove the line from `.env`; the container warns about it
+  and about every other unknown `SAMBA_*` or `ACME_*` variable.
+- Let's Encrypt no longer replaces Samba's certificate: haproxy serves it on
+  `SAMBA_VIRTUAL_ADDRESSES` only, which it now requires. Clients that connect to a
+  domain controller by its host name get Samba's own certificate again.
 - No longer used: the volume `samba-dc-bind` (`docker volume rm samba-dc-bind`) and the
   files `netlogon.conf` and `sysvol.conf` below `/etc/samba/conf.d` (delete them).

@@ -57,6 +57,8 @@ write_configs() {
   render smb.conf.j2 /etc/samba/smb.conf
   if [ "$SAMBA_LETSENCRYPT" == yes ]; then
     letsencrypt.sh install
+  fi
+  if [ -n "$SAMBA_VIRTUAL_ADDRESSES" ]; then
     render haproxy.cfg.j2 /etc/haproxy/haproxy.cfg
   fi
   # BIND runs as user bind and keeps its session key here
@@ -74,7 +76,7 @@ write_configs() {
   fi
   output=$(named-checkconf /etc/bind/named.conf 2>&1) ||
     fail "BIND rejects the generated named.conf:" "$output"
-  if [ "$SAMBA_LETSENCRYPT" == yes ]; then
+  if [ -n "$SAMBA_VIRTUAL_ADDRESSES" ]; then
     output=$(haproxy -c -q -f /etc/haproxy/haproxy.cfg 2>&1) ||
       fail "haproxy rejects the generated haproxy.cfg:" "$output"
   fi
@@ -102,6 +104,10 @@ write_programs() {
     } >> "$file"
   fi
 
+  if [ -n "$SAMBA_VIRTUAL_ADDRESSES" ]; then
+    cat "$TEMPLATES/vip-proxy.conf" >> "$file"
+  fi
+
   # The API token goes to certbot alone, in a file only root can read;
   # Samba, BIND and the agent are started without it.
   rm -rf /run/letsencrypt
@@ -112,7 +118,7 @@ write_programs() {
     fi
     mkdir -m 700 /run/letsencrypt
     (umask 077; echo "dns_cloudflare_api_token = $token" > /run/letsencrypt/cloudflare.ini)
-    cat "$TEMPLATES/vip-proxy.conf" "$TEMPLATES/letsencrypt.conf" >> "$file"
+    cat "$TEMPLATES/letsencrypt.conf" >> "$file"
   fi
   unset CLOUDFLARE_DNS_API_TOKEN CLOUDFLARE_DNS_API_TOKEN_FILE
 }

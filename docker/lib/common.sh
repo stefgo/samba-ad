@@ -5,6 +5,12 @@
 DOCS_URL=https://stefgo.github.io/samba-ad
 # shellcheck disable=SC2034 # used by entrypoint.sh
 TEMPLATES=/usr/local/share/samba-ad
+# What haproxy serves on SAMBA_VIRTUAL_ADDRESSES: LDAP, LDAPS, Global Catalog
+# and Global Catalog over TLS. With Let's Encrypt, TLS on VIP_TLS_PORTS ends
+# at haproxy. Exported for haproxy.cfg.j2.
+VIP_PORTS="389 636 3268 3269"
+VIP_TLS_PORTS="636 3269"
+export VIP_PORTS VIP_TLS_PORTS
 
 info() {
   echo "samba-ad: $*"
@@ -49,14 +55,33 @@ host_address_entry() {
   host_addresses | awk -F/ -v a="$1" '$1 == a {print; found = 1; exit} END {exit !found}'
 }
 
-# The settings of .env (see .env.example) with their defaults. Every default
-# lives here and nowhere else.
+# The settings of .env (see .env.example). Other variables starting with
+# SAMBA_ or ACME_ are reported as unknown; SADM_* are left alone, the SADM
+# agent reads more of them than this image knows.
+SETTINGS=(SAMBA_HOST_ADDRESS SAMBA_REALM SAMBA_PEER_SERVER SAMBA_WORKGROUP
+  SAMBA_INTERFACES SAMBA_VIRTUAL_ADDRESSES SAMBA_DNS_FORWARDERS
+  SAMBA_DNS_ALLOW_RECURSION SAMBA_LDAP_REQUIRE_STRONG_AUTH SAMBA_LOG_LEVEL
+  SAMBA_LETSENCRYPT ACME_DOMAINS ACME_EMAIL ACME_SERVER ACME_KEY_TYPE
+  ACME_PROPAGATION_SECONDS SADM_AGENT TZ)
+# Variables with these prefixes that are no settings: compose.yaml's and the
+# image's own
+OTHER_VARIABLES=(SAMBA_IMAGE_TAG SAMBA_AD_VERSION SAMBA_AD_REVISION)
+# Settings of earlier versions, with what took their place
+declare -A REMOVED_SETTINGS=(
+  [SAMBA_BIND_INTERFACES_ONLY]="Samba listens on SAMBA_INTERFACES only; haproxy serves LDAP and the Global Catalog on SAMBA_VIRTUAL_ADDRESSES."
+  [SAMBA_INTERFACE]="It is called SAMBA_INTERFACES now."
+  [SAMBA_VIRTUAL_ADDRESS]="It is called SAMBA_VIRTUAL_ADDRESSES now."
+  [SAMBA_DNS_FORWARDER]="It is called SAMBA_DNS_FORWARDERS now."
+  [SAMBA_HOST_NAME]="The host name of the host is used."
+)
+
+# The settings of .env with their defaults. Every default lives here and
+# nowhere else.
 load_settings() {
   : "${SAMBA_HOST_ADDRESS:=}"
   : "${SAMBA_REALM:=}"
   : "${SAMBA_PEER_SERVER:=}"
   : "${SAMBA_INTERFACES:=}"
-  : "${SAMBA_BIND_INTERFACES_ONLY:=yes}"
   : "${SAMBA_VIRTUAL_ADDRESSES:=}"
   : "${SAMBA_DNS_FORWARDERS:=}"
   : "${SAMBA_DNS_ALLOW_RECURSION:=localhost localnets}"
@@ -89,12 +114,24 @@ load_settings() {
     fi
   fi
 
-  export SAMBA_HOST_ADDRESS SAMBA_REALM SAMBA_PEER_SERVER SAMBA_INTERFACES \
-    SAMBA_BIND_INTERFACES_ONLY SAMBA_VIRTUAL_ADDRESSES SAMBA_DNS_FORWARDERS \
-    SAMBA_DNS_ALLOW_RECURSION SAMBA_LDAP_REQUIRE_STRONG_AUTH SAMBA_LOG_LEVEL \
-    SAMBA_LETSENCRYPT ACME_DOMAINS ACME_EMAIL ACME_SERVER ACME_KEY_TYPE \
-    ACME_PROPAGATION_SECONDS SADM_AGENT TZ SAMBA_WORKGROUP DNS_DOMAIN REALM \
-    HOST_NAME NETBIOS_NAME FQDN
+  export "${SETTINGS[@]}" DNS_DOMAIN REALM HOST_NAME NETBIOS_NAME FQDN
+}
+
+# Warns about variables in .env that look like settings but are none, e.g.
+# misspelled or removed ones. Empty ones do no harm and are skipped.
+check_unknown_settings() {
+  local name known=" ${SETTINGS[*]} ${OTHER_VARIABLES[*]} "
+  for name in $(compgen -e | grep -E '^(SAMBA|ACME)_'); do
+    if [[ $known == *" $name "* ]] || [ -z "${!name}" ]; then
+      continue
+    fi
+    if [ -n "${REMOVED_SETTINGS[$name]:-}" ]; then
+      warn "$name is no longer used: ${REMOVED_SETTINGS[$name]} Remove it from .env."
+    else
+      warn "$name is not a setting of this image; check its spelling in .env." \
+        "The settings: $DOCS_URL/configuration/"
+    fi
+  done
 }
 
 check_yes_no() {
@@ -108,6 +145,7 @@ check_yes_no() {
 check_settings() {
   local mode=$1 entry vip
 
+  check_unknown_settings
   [ -n "$SAMBA_HOST_ADDRESS" ] ||
     fail "SAMBA_HOST_ADDRESS is not set." "Set it in .env to the fixed IPv4 address of this host." \
       "docs:configuration/"
@@ -157,7 +195,6 @@ check_settings() {
     fail "SAMBA_INTERFACES must contain SAMBA_HOST_ADDRESS ($SAMBA_HOST_ADDRESS)." \
       "Leave SAMBA_INTERFACES empty to derive it."
 
-  check_yes_no SAMBA_BIND_INTERFACES_ONLY
   check_yes_no SAMBA_LETSENCRYPT
   check_yes_no SADM_AGENT
 
@@ -226,16 +263,11 @@ check_tls_settings() {
   fi
   [ "$SAMBA_LETSENCRYPT" == yes ] || return 0
 
-  # The certificate is served by haproxy on the virtual addresses; Samba
-  # keeps its own and must leave 389 and 636 there to haproxy
+  # haproxy serves the certificate on the virtual addresses; Samba keeps its own
   [ -n "$SAMBA_VIRTUAL_ADDRESSES" ] ||
     fail "SAMBA_LETSENCRYPT=yes needs SAMBA_VIRTUAL_ADDRESSES." \
       "The Let's Encrypt certificate is served on the virtual addresses only." \
       "docs:tls/#lets-encrypt"
-  [ "$SAMBA_BIND_INTERFACES_ONLY" == yes ] ||
-    fail "SAMBA_LETSENCRYPT=yes needs SAMBA_BIND_INTERFACES_ONLY=yes." \
-      "haproxy serves LDAP on the virtual addresses; Samba listening on every" \
-      "address would take the ports from it." "docs:virtual-address/#central-ldap-names"
   [ -n "$ACME_DOMAINS" ] ||
     fail "ACME_DOMAINS is required with SAMBA_LETSENCRYPT=yes." \
       "List the names under which applications reach LDAP on the virtual address." \
@@ -266,40 +298,36 @@ check_tls_settings() {
 }
 
 # Fails if another program listens on a port this DC needs: 53 (BIND) on the
-# addresses BIND uses, 88, 389 and 445 (Samba) on Samba's addresses, and with
-# Let's Encrypt 389 and 636 (haproxy) on the virtual addresses
+# addresses BIND uses, 88, 389 and 445 (Samba) on Samba's addresses, and the
+# ports of haproxy (VIP_PORTS) on the virtual addresses
 check_ports() {
   local samba_addresses=() bind_addresses=(127.0.0.1 "$SAMBA_HOST_ADDRESS")
-  local proxy_addresses=() entry port local_address address wanted
+  local vip_addresses=() entry port local_address address wanted
   # shellcheck disable=SC2206
-  bind_addresses+=($SAMBA_VIRTUAL_ADDRESSES)
-  if [ "$SAMBA_BIND_INTERFACES_ONLY" == yes ]; then
-    for entry in $SAMBA_INTERFACES; do
-      samba_addresses+=("${entry%/*}")
-    done
-  else
-    samba_addresses=(any)
-  fi
-  if [ "$SAMBA_LETSENCRYPT" == yes ]; then
-    # shellcheck disable=SC2206
-    proxy_addresses=($SAMBA_VIRTUAL_ADDRESSES)
-  fi
+  vip_addresses=($SAMBA_VIRTUAL_ADDRESSES)
+  bind_addresses+=("${vip_addresses[@]}")
+  for entry in $SAMBA_INTERFACES; do
+    samba_addresses+=("${entry%/*}")
+  done
 
-  for port in 53 88 389 445 636; do
+  for port in 53 88 389 445 636 3268 3269; do
+    wanted=" "
     case $port in
-      53) wanted=" ${bind_addresses[*]} " ;;
-      389) wanted=" ${samba_addresses[*]} ${proxy_addresses[*]} " ;;
-      # Samba's own 636 follows 389; only haproxy's is checked
-      636) wanted=" ${proxy_addresses[*]} " ;;
-      *) wanted=" ${samba_addresses[*]} " ;;
+      53) wanted+="${bind_addresses[*]} " ;;
+      # Samba opens these together with 389
+      636|3268|3269) ;;
+      *) wanted+="${samba_addresses[*]} " ;;
     esac
+    if [[ " $VIP_PORTS " == *" $port "* ]]; then
+      wanted+="${vip_addresses[*]} "
+    fi
     [ -n "${wanted// /}" ] || continue
     while read -r local_address; do
       address=${local_address%:*}
       address=${address%%%*}
       address=${address#[}
       address=${address%]}
-      if [[ $address == @(0.0.0.0|::|\*) || $wanted == *" any "* || $wanted == *" $address "* ]]; then
+      if [[ $address == @(0.0.0.0|::|\*) || $wanted == *" $address "* ]]; then
         fail "Port $port is already in use on this host ($local_address)." \
           "Another program listens there, e.g. a DNS server, or a second container" \
           "of this DC. Find it on the host with: sudo ss -ltnup 'sport = :$port'" \
@@ -333,19 +361,16 @@ versions() {
 # The effective settings, shown at start and by init.sh before it changes
 # anything
 summary() {
-  local tls vip_tls=none listen recursion
+  local tls vip_ldap=none recursion
   if [ -f /tls/cert.pem ]; then
     tls="own certificate from tls/cert.pem"
   else
     tls="self-signed, generated by Samba"
   fi
   if [ "$SAMBA_LETSENCRYPT" == yes ]; then
-    vip_tls="Let's Encrypt for $ACME_DOMAINS (haproxy)"
-  fi
-  if [ "$SAMBA_BIND_INTERFACES_ONLY" == yes ]; then
-    listen=$SAMBA_INTERFACES
-  else
-    listen="every address of the host"
+    vip_ldap="haproxy, LDAPS with Let's Encrypt for $ACME_DOMAINS"
+  elif [ -n "$SAMBA_VIRTUAL_ADDRESSES" ]; then
+    vip_ldap="haproxy, passed on to Samba"
   fi
   recursion=$SAMBA_DNS_ALLOW_RECURSION
   if [ -n "$SAMBA_DNS_FORWARDERS" ]; then
@@ -356,11 +381,11 @@ summary() {
   Domain             $REALM (NetBIOS: $SAMBA_WORKGROUP)
   Address            $SAMBA_HOST_ADDRESS
   Virtual addresses  ${SAMBA_VIRTUAL_ADDRESSES:-none}
-  Samba listens on   $listen
+  Samba listens on   $SAMBA_INTERFACES
   DNS recursion for  $recursion
   LDAP without TLS   $([ "$SAMBA_LDAP_REQUIRE_STRONG_AUTH" == no ] && echo "simple bind allowed" || echo "simple bind refused")
   Samba certificate  $tls
-  VIP certificate    $vip_tls
+  LDAP on the VIPs   $vip_ldap
   SADM agent         $SADM_AGENT
   Time zone          $TZ
 EOF

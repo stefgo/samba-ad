@@ -19,16 +19,15 @@ an own certificate for Samba.
 
 The domain controller obtains a certificate for the central names on the
 virtual address and renews it before it expires. haproxy in the container
-serves it for LDAPS on `SAMBA_VIRTUAL_ADDRESSES` and passes the connections
-on to Samba; Samba keeps its own certificate for its host name (see
+serves it for LDAPS (636) and the Global Catalog over TLS (3269) on
+`SAMBA_VIRTUAL_ADDRESSES` and passes the connections on to Samba; Samba keeps its own certificate for its host name (see
 [Central LDAP names](virtual-address.md#central-ldap-names)). The challenge is
 answered through DNS (DNS-01) with Cloudflare's API, so the names need not be
 reachable from the internet; only their domain has to be at Cloudflare.
 
 Requirements:
 
-- A virtual address in `SAMBA_VIRTUAL_ADDRESSES`, and
-  `SAMBA_BIND_INTERFACES_ONLY=yes` (the default).
+- A virtual address in `SAMBA_VIRTUAL_ADDRESSES`.
 - A Cloudflare API token with the permissions **Zone / DNS / Edit** and
   **Zone / Zone / Read**, restricted to the zones of the names
   (*My Profile → API Tokens → Create Token*, template "Edit zone DNS").
@@ -101,7 +100,7 @@ Place these files in `tls/` next to `compose.yaml` and restart the container:
 
 | File | Content |
 |---|---|
-| `tls/cert.pem` | Certificate; list the host name of the domain controller as subject alternative name, and the central names too if Samba serves them itself (without Let's Encrypt) |
+| `tls/cert.pem` | Certificate; list the host name of the domain controller as subject alternative name, and without Let's Encrypt the central names on the virtual address too |
 | `tls/key.pem` | Private key, unencrypted |
 | `tls/ca.pem` | Optional: certificate of the issuing CA |
 

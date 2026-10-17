@@ -12,7 +12,8 @@ SAMBA_VIRTUAL_ADDRESSES=192.168.1.100
 
 BIND then answers on `127.0.0.1`, the host address and the virtual address.
 It starts answering on the virtual address as soon as keepalived assigns it
-and stops when the address moves away; no restart is needed.
+and stops when the address moves away; no restart is needed. haproxy serves
+LDAP and the Global Catalog there, see [Central LDAP names](#central-ldap-names).
 
 The virtual address belongs in `SAMBA_VIRTUAL_ADDRESSES` only:
 
@@ -34,8 +35,9 @@ A check script for keepalived that follows the DNS service:
 
 ## Central LDAP names
 
-Applications can reach LDAP (389) and LDAPS (636) under one name that follows
-the virtual address, e.g. `ldap.example.net`.
+Applications can reach LDAP (389), LDAPS (636) and the
+[Global Catalog](#global-catalog) (3268, 3269) under one name that follows the
+virtual address, e.g. `ldap.example.net`.
 
 **The name resolves to the virtual address.** The name need not lie in the
 realm. Create an A record pointing to the virtual address once, where the
@@ -52,57 +54,59 @@ domain of the name is served:
     docker compose exec samba-dc samba-tool dns add dc1 example.lan ldap A 192.168.1.100 -UAdministrator
     ```
 
-**Something serves LDAP on the virtual address**, in one of two ways.
+**haproxy serves the virtual address.** With `SAMBA_VIRTUAL_ADDRESSES` set,
+haproxy runs in the container and serves these ports on every virtual
+address; Samba itself listens on its fixed addresses (`SAMBA_INTERFACES`)
+only:
 
-### With Let's Encrypt
+| Port on the virtual address | Without Let's Encrypt | With [Let's Encrypt](tls.md#lets-encrypt) |
+|---|---|---|
+| 389 LDAP | passed on to Samba | passed on to Samba |
+| 636 LDAPS | passed on, Samba's certificate | Let's Encrypt certificate, then TLS to Samba |
+| 3268 Global Catalog | passed on to Samba | passed on to Samba |
+| 3269 Global Catalog over TLS | passed on, Samba's certificate | Let's Encrypt certificate, then TLS to Samba |
 
-With [Let's Encrypt](tls.md#lets-encrypt) switched on, haproxy runs in the
-container and serves LDAP on the virtual addresses. The Let's Encrypt
-certificate belongs to the virtual addresses only; Samba keeps its own
-certificate (self-signed, or an [own certificate](tls.md#own-certificate))
-for the host names:
+haproxy binds the virtual address even while the other host holds it, so a
+failover needs no restart.
 
-```
-ldaps://ldap.example.net:636  →  haproxy, Let's Encrypt certificate  →  TLS  →  Samba
-ldap://ldap.example.net:389   →  haproxy, passed on unchanged        →         Samba
-ldaps://dc1.example.lan:636   →  Samba, its own certificate
-```
+**The certificate carries the name.** Samba's certificate serves the host
+name of the domain controller (`ldaps://dc1.example.lan`). For the central
+name there are two ways:
 
-```sh
-SAMBA_VIRTUAL_ADDRESSES=192.168.1.100
-SAMBA_LETSENCRYPT=yes
-ACME_DOMAINS=ldap.example.net
-```
+- **Let's Encrypt** (names in a public domain): the certificate belongs to
+  the virtual addresses only, Samba keeps its own for the host names.
+  haproxy passes LDAPS on to Samba encrypted, so
+  `SAMBA_LDAP_REQUIRE_STRONG_AUTH=yes` still accepts simple binds through it.
 
-Samba listens on its fixed addresses only and leaves 389 and 636 on the
-virtual address to haproxy; `SAMBA_BIND_INTERFACES_ONLY=no` is refused. haproxy
-binds the virtual address even while the other host holds it, so a failover
-needs no restart. It passes LDAPS on to Samba encrypted, so
-`SAMBA_LDAP_REQUIRE_STRONG_AUTH=yes` still accepts simple binds through it.
+    ```sh
+    SAMBA_VIRTUAL_ADDRESSES=192.168.1.100
+    SAMBA_LETSENCRYPT=yes
+    ACME_DOMAINS=ldap.example.net
+    ```
 
-### Without Let's Encrypt
+- **An [own certificate](tls.md#own-certificate)** (e.g. names inside a
+  private realm) for Samba that lists the central names as well as the host
+  names; haproxy passes it through unchanged.
 
-Samba listens on the virtual address itself with
+### Global Catalog
 
-```sh
-SAMBA_BIND_INTERFACES_ONLY=no
-```
-
-on every address of the host, including the virtual address while the host
-holds it. The DNS registration still follows `SAMBA_INTERFACES`. Samba then
-serves one certificate for every name: an [own certificate](tls.md#own-certificate)
-that lists the central names and the host names of the domain controllers.
+The Global Catalog (3268, 3269 with TLS) answers searches across every
+domain of the forest, e.g. for applications that look up users of several
+domains. It is read-only and holds a subset of the attributes of each
+object. In a forest with one domain, LDAP on 389/636 finds the same objects
+with all attributes; use the Global Catalog where an application asks for it.
+On 3269, the certificate is the same as on 636.
 
 ### Check for keepalived
 
-Let keepalived follow both LDAP services of Samba as well:
+Let keepalived follow the LDAP services of Samba as well:
 
 ```sh
 /usr/bin/nc -z -w 1 127.0.0.1 389 && /usr/bin/nc -z -w 1 127.0.0.1 636
 ```
 
-With Let's Encrypt, the container's health check also covers haproxy, and
-`diagnose` checks LDAPS on the virtual address while this host holds it.
+The container's health check also covers haproxy, and `diagnose` checks
+haproxy's ports on the virtual address while this host holds it.
 
 ### Limits
 
@@ -110,29 +114,23 @@ With Let's Encrypt, the container's health check also covers haproxy, and
   `ldap/ldap.example.lan` can belong to one domain controller only.
   Applications that bind with a DN or user name and a password (simple bind,
   NTLM) work.
-- **Not a domain controller address for domain members.** With Let's
-  Encrypt only 389 and 636 are served there at all. Without it, only TCP is
-  reliable; replies to UDP requests (CLDAP, Kerberos over UDP) leave from the
-  fixed address of the host.
+- **Not a domain controller address for domain members.** Only LDAP and the
+  Global Catalog are served there; Kerberos, SMB and CLDAP are not.
 - **Referrals and `dnsHostName` name the real domain controllers**, whose
   fixed addresses must be reachable for clients that follow them.
 - **Open connections break on a failover**; the application reconnects.
-- With Let's Encrypt:
-    - **StartTLS on port 389 gets Samba's own certificate**; haproxy cannot
-      take part in StartTLS. Applications use LDAPS (636) on the central name.
-    - **Samba sees the host address as the client** of every connection
-      through the virtual address. haproxy logs one line per connection with
-      the real client address (`docker compose logs samba-dc`).
-    - **Samba's own LDAP client hangs** on LDAPS through haproxy (TLS 1.3),
-      e.g. `samba-tool ... -H ldaps://ldap.example.net`. Point Samba's tools at
-      a domain controller's host name instead. OpenLDAP's client library,
-      which many applications use, is not affected.
-- Without Let's Encrypt:
-    - **Samba becomes reachable on every address of the host**, including
-      Docker bridges and further networks. Restrict this with a firewall where
-      needed.
-    - **One certificate for all names.** A certificate that carries the
-      central names only does not match the domain controller's own host
-      name; clients that address a domain controller directly and check the
-      name fail. A SADM server accepts such a certificate once the central
-      names are listed in its `directory.serviceUrls`.
+- **Samba sees the host address as the client** of every connection through
+  the virtual address. haproxy logs one line per connection with the real
+  client address (`docker compose logs samba-dc`).
+- **StartTLS on port 389 gets Samba's own certificate**; haproxy cannot take
+  part in StartTLS. With Let's Encrypt, applications use LDAPS (636) on the
+  central name.
+- With Let's Encrypt, **Samba's own LDAP client hangs** on LDAPS through
+  haproxy (TLS 1.3), e.g. `samba-tool ... -H ldaps://ldap.example.net`. Point
+  Samba's tools at a domain controller's host name instead. OpenLDAP's client
+  library, which many applications use, is not affected.
+- Without Let's Encrypt, **one certificate serves all names.** A certificate
+  that carries the central names only does not match the domain
+  controller's own host name; clients that address a domain controller
+  directly and check the name fail. A SADM server accepts such a certificate
+  once the central names are listed in its `directory.serviceUrls`.

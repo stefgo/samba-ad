@@ -59,7 +59,8 @@ section "Programs"
 status=$(supervisorctl status 2>&1)
 programs=(bind samba)
 if [ "$SADM_AGENT" == yes ]; then programs+=(sadm-client); fi
-if [ "$SAMBA_LETSENCRYPT" == yes ]; then programs+=(vip-proxy letsencrypt); fi
+if [ -n "$SAMBA_VIRTUAL_ADDRESSES" ]; then programs+=(vip-proxy); fi
+if [ "$SAMBA_LETSENCRYPT" == yes ]; then programs+=(letsencrypt); fi
 for program in "${programs[@]}"; do
   state=$(awk -v p="$program" '$1 == p {print $2}' <<< "$status")
   if [ "$state" == RUNNING ]; then
@@ -86,14 +87,18 @@ done
 for vip in $SAMBA_VIRTUAL_ADDRESSES; do
   if host_address_entry "$vip" >/dev/null; then
     ok "This host holds the virtual address $vip"
-    if [ "$SAMBA_LETSENCRYPT" == yes ]; then
-      if nc -z -w 3 "$vip" 636 2>/dev/null; then
-        ok "LDAPS (haproxy) answers on $vip:636"
-      else
-        bad "LDAPS (haproxy) does not answer on $vip:636" \
-          "Its messages: docker compose logs samba-dc | grep -i haproxy" \
-          "docs:virtual-address/#central-ldap-names"
+    failed=()
+    for port in $VIP_PORTS; do
+      if ! nc -z -w 3 "$vip" "$port" 2>/dev/null; then
+        failed+=("$port")
       fi
+    done
+    if [ ${#failed[@]} -eq 0 ]; then
+      ok "haproxy answers on $vip, ports ${VIP_PORTS// /, }"
+    else
+      bad "haproxy does not answer on $vip, port ${failed[*]}" \
+        "Its messages: docker compose logs samba-dc | grep -i haproxy" \
+        "docs:virtual-address/#central-ldap-names"
     fi
   else
     ok "The virtual address $vip is held by another host (or nobody)"

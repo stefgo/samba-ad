@@ -1,13 +1,16 @@
 {# Template of /etc/haproxy/haproxy.cfg, written by entrypoint.sh at every
-   start with SAMBA_LETSENCRYPT=yes. The names are the settings of .env, as
-   completed by load_settings in common.sh. letsencrypt.sh writes the
-   certificate. #}
+   start with SAMBA_VIRTUAL_ADDRESSES. The names are the settings of .env, as
+   completed by load_settings in common.sh, and VIP_PORTS and VIP_TLS_PORTS
+   from common.sh. letsencrypt.sh writes the certificate. #}
+{% set letsencrypt = SAMBA_LETSENCRYPT == "yes" %}
 # Written by the container at every start; changes here are lost.
 #
-# LDAP on the virtual addresses. Samba serves one certificate only, its own
-# for the host names; LDAPS on a virtual address gets the Let's Encrypt
-# certificate from here and is passed on to Samba over TLS, so that Samba
-# still sees an encrypted connection.
+# LDAP and the Global Catalog on the virtual addresses. Samba listens on its
+# fixed addresses only and serves one certificate, its own for the host
+# names. With Let's Encrypt, TLS on the virtual addresses ends here with the
+# Let's Encrypt certificate and is passed on to Samba over TLS, so that Samba
+# still sees an encrypted connection; otherwise everything is passed on
+# unchanged.
 
 global
 	log stdout format raw local0
@@ -26,24 +29,17 @@ defaults
 	# LDAP clients keep idle connections in their pools
 	timeout client 1h
 	timeout server 1h
+{% for port in VIP_PORTS.split() %}
+{% set tls = letsencrypt and port in VIP_TLS_PORTS.split() %}
 
-frontend ldaps
-	# transparent: also binds a virtual address this host does not hold
-	# (IP_FREEBIND), so haproxy need not wait for keepalived
+# transparent: also binds a virtual address this host does not hold
+# (IP_FREEBIND), so haproxy need not wait for keepalived
+frontend port-{{ port }}
 {% for vip in SAMBA_VIRTUAL_ADDRESSES.split() %}
-	bind {{ vip }}:636 transparent ssl crt /etc/haproxy/certs/vip.pem
+	bind {{ vip }}:{{ port }} transparent{{ " ssl crt /etc/haproxy/certs/vip.pem" if tls else "" }}
 {% endfor %}
-	default_backend samba-ldaps
+	default_backend samba-{{ port }}
 
-# StartTLS cannot be handled here; it reaches Samba and its own certificate
-frontend ldap
-{% for vip in SAMBA_VIRTUAL_ADDRESSES.split() %}
-	bind {{ vip }}:389 transparent
+backend samba-{{ port }}
+	server samba {{ SAMBA_HOST_ADDRESS }}:{{ port }}{{ " ssl" if tls else "" }}
 {% endfor %}
-	default_backend samba-ldap
-
-backend samba-ldaps
-	server samba {{ SAMBA_HOST_ADDRESS }}:636 ssl
-
-backend samba-ldap
-	server samba {{ SAMBA_HOST_ADDRESS }}:389
