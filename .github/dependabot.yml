@@ -3,7 +3,8 @@
 # grouped pull request a month is the cheapest way to notice.
 #
 # This repository is maintained without pull requests, so a monthly one would
-# simply wait; dependabot-auto-merge.yml merges it once its checks are green.
+# simply wait; dependabot-auto-merge.yml merges it once its checks are green
+# and then builds the image, whose smoke test exercises the bumped actions.
 # The same setup as the other stefgo projects; with no dev branch here, the
 # target is main.
 version: 2

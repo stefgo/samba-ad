@@ -2,35 +2,69 @@
 # repository is maintained without pull requests. An update that is opened and
 # never merged is not a slower update, it is none.
 #
-# So the merge happens here. The gate is the pull request's own ci.yml run, and
-# --auto is what waits for it: a red run leaves the pull request open and
-# visible, which is the case that wants a human anyway.
+# The gate is the pull request's own checks: this workflow starts when its
+# Check Code run has finished, and merges once every check of the pull request
+# has passed. A red run leaves the pull request open and visible, which is the
+# case that wants a human anyway.
+#
+# Deliberately not "gh pr merge --auto": without branch protection there are no
+# required checks for auto-merge to wait on, and it merges immediately. A
+# ruleset that requires checks would also stop the release workflow's own push
+# to main, and a personal account cannot exempt GitHub Actions from it.
 name: Merge Dependency Updates
 
 on:
-  pull_request:
+  workflow_run:
+    workflows: [Check Code]
+    types: [completed]
 
-# Per pull request. Dependabot force-pushes its branch when it rebases, and the
-# run for the superseded head has nothing left to say.
+permissions:
+  contents: read
+
+# Per pull request, one after the other: when two runs finish together, the
+# second finds the pull request merged and stops.
 concurrency:
-  group: dependabot-merge-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: dependabot-merge-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
 
 jobs:
   merge:
-    # A pull request from anyone else is not touched; the job is skipped
-    if: github.actor == 'dependabot[bot]'
+    # Only a green run, only for a pull request, only Dependabot's. Anything
+    # else is skipped rather than failed.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.actor.login == 'dependabot[bot]'
     name: Merge once the checks are green
     runs-on: ubuntu-latest
     permissions:
       contents: write # merge the pull request
-      pull-requests: write # ... and put it into auto-merge
+      pull-requests: write
+      actions: write # start build.yml
     steps:
-      # Needs "Allow auto-merge" under Settings -> General -> Pull Requests.
-      # Without it this fails loudly, the intended failure mode: merging
-      # unchecked would be worse than the backlog it replaces.
-      - name: Enable auto-merge
+      - name: Merge
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr merge --auto --squash "$PR_URL"
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          # The number, or the branch where GitHub leaves the list empty
+          PR=${PR_NUMBER:-$BRANCH}
+          if [ "$(gh pr view "$PR" --json state --jq .state)" != OPEN ]; then
+            echo "Pull request $PR is no longer open."
+            exit 0
+          fi
+          # Every check of the pull request, not only the run that started this
+          # one. While another still runs, the run that finishes last merges.
+          if ! gh pr checks "$PR"; then
+            echo "Not every check of $PR has passed (yet); nothing merged."
+            exit 0
+          fi
+          # --match-head-commit: if Dependabot has rebased the branch since, the
+          # merge is refused and the runs for the new head decide.
+          gh pr merge "$PR" --squash --delete-branch --match-head-commit "$SHA"
+          # A merge with this token starts no workflow, so the image and its
+          # smoke test would only be built on the next push. Started here.
+          gh workflow run build.yml --ref main
