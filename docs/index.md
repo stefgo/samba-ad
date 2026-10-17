@@ -23,7 +23,7 @@ container samba-dc, on the network of the host
   supervisord
     ├─ BIND         port 53; the AD zones come from Samba's database (DLZ)
     ├─ Samba        Kerberos 88, LDAP 389/636, SMB 445, Global Catalog 3268, …
-    ├─ haproxy      optional, LDAP and Global Catalog on the virtual addresses
+    ├─ haproxy      optional, LDAP and Global Catalog on virtual addresses
     ├─ SADM agent   optional
     └─ certbot      optional, Let's Encrypt for haproxy
   volume samba-dc-etc  →  /etc/samba

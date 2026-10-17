@@ -5,9 +5,9 @@
 DOCS_URL=https://stefgo.github.io/samba-ad
 # shellcheck disable=SC2034 # used by entrypoint.sh
 TEMPLATES=/usr/local/share/samba-ad
-# What haproxy serves on SAMBA_VIRTUAL_ADDRESSES: LDAP, LDAPS, Global Catalog
-# and Global Catalog over TLS. With Let's Encrypt, TLS on VIP_TLS_PORTS ends
-# at haproxy. Exported for haproxy.cfg.j2.
+# What haproxy serves on SAMBA_LDAP_VIRTUAL_ADDRESSES: LDAP, LDAPS, Global
+# Catalog and Global Catalog over TLS. With Let's Encrypt, TLS on
+# VIP_TLS_PORTS ends at haproxy. Exported for haproxy.cfg.j2.
 VIP_PORTS="389 636 3268 3269"
 VIP_TLS_PORTS="636 3269"
 export VIP_PORTS VIP_TLS_PORTS
@@ -59,18 +59,19 @@ host_address_entry() {
 # SAMBA_ or ACME_ are reported as unknown; SADM_* are left alone, the SADM
 # agent reads more of them than this image knows.
 SETTINGS=(SAMBA_HOST_ADDRESS SAMBA_REALM SAMBA_PEER_SERVER SAMBA_WORKGROUP
-  SAMBA_INTERFACES SAMBA_VIRTUAL_ADDRESSES SAMBA_DNS_FORWARDERS
-  SAMBA_DNS_ALLOW_RECURSION SAMBA_LDAP_REQUIRE_STRONG_AUTH SAMBA_LOG_LEVEL
-  SAMBA_LETSENCRYPT ACME_DOMAINS ACME_EMAIL ACME_SERVER ACME_KEY_TYPE
-  ACME_PROPAGATION_SECONDS SADM_AGENT TZ)
+  SAMBA_INTERFACES SAMBA_DNS_VIRTUAL_ADDRESSES SAMBA_LDAP_VIRTUAL_ADDRESSES
+  SAMBA_DNS_FORWARDERS SAMBA_DNS_ALLOW_RECURSION SAMBA_LDAP_REQUIRE_STRONG_AUTH
+  SAMBA_LOG_LEVEL SAMBA_LETSENCRYPT ACME_DOMAINS ACME_EMAIL ACME_SERVER
+  ACME_KEY_TYPE ACME_PROPAGATION_SECONDS SADM_AGENT TZ)
 # Variables with these prefixes that are no settings: compose.yaml's and the
 # image's own
 OTHER_VARIABLES=(SAMBA_IMAGE_TAG SAMBA_AD_VERSION SAMBA_AD_REVISION)
 # Settings of earlier versions, with what took their place
 declare -A REMOVED_SETTINGS=(
-  [SAMBA_BIND_INTERFACES_ONLY]="Samba listens on SAMBA_INTERFACES only; haproxy serves LDAP and the Global Catalog on SAMBA_VIRTUAL_ADDRESSES."
+  [SAMBA_BIND_INTERFACES_ONLY]="Samba listens on SAMBA_INTERFACES only; haproxy serves LDAP and the Global Catalog on SAMBA_LDAP_VIRTUAL_ADDRESSES."
   [SAMBA_INTERFACE]="It is called SAMBA_INTERFACES now."
-  [SAMBA_VIRTUAL_ADDRESS]="It is called SAMBA_VIRTUAL_ADDRESSES now."
+  [SAMBA_VIRTUAL_ADDRESS]="It is split into SAMBA_DNS_VIRTUAL_ADDRESSES (BIND) and SAMBA_LDAP_VIRTUAL_ADDRESSES (haproxy) now."
+  [SAMBA_VIRTUAL_ADDRESSES]="It is split into SAMBA_DNS_VIRTUAL_ADDRESSES (BIND) and SAMBA_LDAP_VIRTUAL_ADDRESSES (haproxy) now."
   [SAMBA_DNS_FORWARDER]="It is called SAMBA_DNS_FORWARDERS now."
   [SAMBA_HOST_NAME]="The host name of the host is used."
 )
@@ -82,7 +83,8 @@ load_settings() {
   : "${SAMBA_REALM:=}"
   : "${SAMBA_PEER_SERVER:=}"
   : "${SAMBA_INTERFACES:=}"
-  : "${SAMBA_VIRTUAL_ADDRESSES:=}"
+  : "${SAMBA_DNS_VIRTUAL_ADDRESSES:=}"
+  : "${SAMBA_LDAP_VIRTUAL_ADDRESSES:=}"
   : "${SAMBA_DNS_FORWARDERS:=}"
   : "${SAMBA_DNS_ALLOW_RECURSION:=localhost localnets}"
   : "${SAMBA_LDAP_REQUIRE_STRONG_AUTH:=no}"
@@ -143,7 +145,7 @@ check_yes_no() {
 
 # Checks the settings; $1 is start, provision or join
 check_settings() {
-  local mode=$1 entry vip
+  local mode=$1 entry
 
   check_unknown_settings
   [ -n "$SAMBA_HOST_ADDRESS" ] ||
@@ -158,7 +160,8 @@ check_settings() {
   host_address_entry "$SAMBA_HOST_ADDRESS" >/dev/null ||
     fail "SAMBA_HOST_ADDRESS $SAMBA_HOST_ADDRESS is not an address of this host." \
       "The host has: $(host_addresses | tr '\n' ' ')" \
-      "Use the fixed address of the host; a virtual address belongs in SAMBA_VIRTUAL_ADDRESSES." \
+      "Use the fixed address of the host; a virtual address belongs in" \
+      "SAMBA_DNS_VIRTUAL_ADDRESSES or SAMBA_LDAP_VIRTUAL_ADDRESSES." \
       "docs:troubleshooting/#address-is-not-an-address-of-this-host"
 
   [[ $DNS_DOMAIN =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$ ]] ||
@@ -230,30 +233,39 @@ check_settings() {
       fail "SAMBA_PEER_SERVER '$SAMBA_PEER_SERVER' is not an IPv4 address."
   fi
 
-  # A virtual address moves between the DCs. It must not be registered in
-  # DNS as address of one of them, nor be used to reach another DC.
-  for vip in $SAMBA_VIRTUAL_ADDRESSES; do
+  check_virtual_addresses SAMBA_DNS_VIRTUAL_ADDRESSES
+  check_virtual_addresses SAMBA_LDAP_VIRTUAL_ADDRESSES
+
+  check_tls_settings
+}
+
+# check_virtual_addresses <setting>: a virtual address moves between the DCs.
+# It must not be registered in DNS as address of one of them, nor be used to
+# reach another DC.
+check_virtual_addresses() {
+  local setting=$1 vip entry
+  for vip in ${!setting}; do
     is_ipv4 "$vip" ||
-      fail "SAMBA_VIRTUAL_ADDRESSES entry '$vip' is not an IPv4 address without prefix."
+      fail "$setting entry '$vip' is not an IPv4 address without prefix."
     [ "$vip" != "$SAMBA_HOST_ADDRESS" ] ||
       fail "SAMBA_HOST_ADDRESS must be the fixed address of the host, not the virtual address $vip." \
         "docs:virtual-address/"
     [ "$vip" != "$SAMBA_PEER_SERVER" ] ||
       fail "SAMBA_PEER_SERVER must be the fixed address of the peer, not the virtual address $vip." \
         "docs:virtual-address/"
-    for entry in $SAMBA_DNS_FORWARDERS; do
-      [ "$vip" != "$entry" ] ||
-        fail "The virtual address $vip must not be a DNS forwarder; BIND would ask itself." \
-          "docs:virtual-address/"
-    done
+    if [ "$setting" == SAMBA_DNS_VIRTUAL_ADDRESSES ]; then
+      for entry in $SAMBA_DNS_FORWARDERS; do
+        [ "$vip" != "$entry" ] ||
+          fail "The virtual address $vip must not be a DNS forwarder; BIND would ask itself." \
+            "docs:virtual-address/"
+      done
+    fi
     for entry in $SAMBA_INTERFACES; do
       [ "$vip" != "${entry%/*}" ] ||
         fail "The virtual address $vip must not be listed in SAMBA_INTERFACES." \
           "Samba would register it in DNS as address of this DC." "docs:virtual-address/"
     done
   done
-
-  check_tls_settings
 }
 
 check_tls_settings() {
@@ -264,9 +276,9 @@ check_tls_settings() {
   [ "$SAMBA_LETSENCRYPT" == yes ] || return 0
 
   # haproxy serves the certificate on the virtual addresses; Samba keeps its own
-  [ -n "$SAMBA_VIRTUAL_ADDRESSES" ] ||
-    fail "SAMBA_LETSENCRYPT=yes needs SAMBA_VIRTUAL_ADDRESSES." \
-      "The Let's Encrypt certificate is served on the virtual addresses only." \
+  [ -n "$SAMBA_LDAP_VIRTUAL_ADDRESSES" ] ||
+    fail "SAMBA_LETSENCRYPT=yes needs SAMBA_LDAP_VIRTUAL_ADDRESSES." \
+      "The Let's Encrypt certificate is served on the virtual LDAP addresses only." \
       "docs:tls/#lets-encrypt"
   [ -n "$ACME_DOMAINS" ] ||
     fail "ACME_DOMAINS is required with SAMBA_LETSENCRYPT=yes." \
@@ -299,13 +311,14 @@ check_tls_settings() {
 
 # Fails if another program listens on a port this DC needs: 53 (BIND) on the
 # addresses BIND uses, 88, 389 and 445 (Samba) on Samba's addresses, and the
-# ports of haproxy (VIP_PORTS) on the virtual addresses
+# ports of haproxy (VIP_PORTS) on the virtual LDAP addresses
 check_ports() {
   local samba_addresses=() bind_addresses=(127.0.0.1 "$SAMBA_HOST_ADDRESS")
   local vip_addresses=() entry port local_address address wanted
   # shellcheck disable=SC2206
-  vip_addresses=($SAMBA_VIRTUAL_ADDRESSES)
-  bind_addresses+=("${vip_addresses[@]}")
+  bind_addresses+=($SAMBA_DNS_VIRTUAL_ADDRESSES)
+  # shellcheck disable=SC2206
+  vip_addresses=($SAMBA_LDAP_VIRTUAL_ADDRESSES)
   for entry in $SAMBA_INTERFACES; do
     samba_addresses+=("${entry%/*}")
   done
@@ -368,9 +381,9 @@ summary() {
     tls="self-signed, generated by Samba"
   fi
   if [ "$SAMBA_LETSENCRYPT" == yes ]; then
-    vip_ldap="haproxy, LDAPS with Let's Encrypt for $ACME_DOMAINS"
-  elif [ -n "$SAMBA_VIRTUAL_ADDRESSES" ]; then
-    vip_ldap="haproxy, passed on to Samba"
+    vip_ldap="$SAMBA_LDAP_VIRTUAL_ADDRESSES (haproxy, LDAPS with Let's Encrypt for $ACME_DOMAINS)"
+  elif [ -n "$SAMBA_LDAP_VIRTUAL_ADDRESSES" ]; then
+    vip_ldap="$SAMBA_LDAP_VIRTUAL_ADDRESSES (haproxy, passed on to Samba)"
   fi
   recursion=$SAMBA_DNS_ALLOW_RECURSION
   if [ -n "$SAMBA_DNS_FORWARDERS" ]; then
@@ -380,12 +393,12 @@ summary() {
   Domain controller  $NETBIOS_NAME ($FQDN)
   Domain             $REALM (NetBIOS: $SAMBA_WORKGROUP)
   Address            $SAMBA_HOST_ADDRESS
-  Virtual addresses  ${SAMBA_VIRTUAL_ADDRESSES:-none}
+  DNS on the VIPs    ${SAMBA_DNS_VIRTUAL_ADDRESSES:-none}
+  LDAP on the VIPs   $vip_ldap
   Samba listens on   $SAMBA_INTERFACES
   DNS recursion for  $recursion
   LDAP without TLS   $([ "$SAMBA_LDAP_REQUIRE_STRONG_AUTH" == no ] && echo "simple bind allowed" || echo "simple bind refused")
   Samba certificate  $tls
-  LDAP on the VIPs   $vip_ldap
   SADM agent         $SADM_AGENT
   Time zone          $TZ
 EOF

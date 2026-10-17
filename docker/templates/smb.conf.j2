@@ -19,7 +19,7 @@
 	idmap_ldb:use rfc2307 = yes
 	interfaces = {{ SAMBA_INTERFACES }}
 	# Only the fixed addresses: haproxy serves LDAP and the Global Catalog on
-	# the virtual addresses (haproxy.cfg.j2)
+	# the virtual LDAP addresses (haproxy.cfg.j2)
 	bind interfaces only = yes
 	log level = {{ SAMBA_LOG_LEVEL }}
 	# no: LDAP simple binds are accepted without TLS (SAMBA_LDAP_REQUIRE_STRONG_AUTH)
@@ -28,7 +28,7 @@
 	# reason is not recorded. "kdc enable fast = yes" in conf.d turns it on.
 	kdc enable fast = no
 {# The Let's Encrypt certificate is not Samba's: haproxy serves it on the
-   virtual addresses #}
+   virtual LDAP addresses #}
 {% if TLS_SOURCE == "own" %}
 
 	# Own certificate from tls/

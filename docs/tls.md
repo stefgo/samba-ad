@@ -20,14 +20,14 @@ an own certificate for Samba.
 The domain controller obtains a certificate for the central names on the
 virtual address and renews it before it expires. haproxy in the container
 serves it for LDAPS (636) and the Global Catalog over TLS (3269) on
-`SAMBA_VIRTUAL_ADDRESSES` and passes the connections on to Samba; Samba keeps its own certificate for its host name (see
+`SAMBA_LDAP_VIRTUAL_ADDRESSES` and passes the connections on to Samba; Samba keeps its own certificate for its host name (see
 [Central LDAP names](virtual-address.md#central-ldap-names)). The challenge is
 answered through DNS (DNS-01) with Cloudflare's API, so the names need not be
 reachable from the internet; only their domain has to be at Cloudflare.
 
 Requirements:
 
-- A virtual address in `SAMBA_VIRTUAL_ADDRESSES`.
+- A virtual address in `SAMBA_LDAP_VIRTUAL_ADDRESSES`.
 - A Cloudflare API token with the permissions **Zone / DNS / Edit** and
   **Zone / Zone / Read**, restricted to the zones of the names
   (*My Profile → API Tokens → Create Token*, template "Edit zone DNS").
@@ -43,7 +43,7 @@ nano acme.env        # CLOUDFLARE_DNS_API_TOKEN=...
 and switch Let's Encrypt on in `.env`:
 
 ```sh
-SAMBA_VIRTUAL_ADDRESSES=192.168.1.100
+SAMBA_LDAP_VIRTUAL_ADDRESSES=192.168.1.100
 SAMBA_LETSENCRYPT=yes
 ACME_DOMAINS=ldap.example.net
 ACME_EMAIL=hostmaster@example.net
@@ -51,7 +51,7 @@ ACME_EMAIL=hostmaster@example.net
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `SAMBA_LETSENCRYPT` | `no` | `yes` obtains and renews the certificate and serves it on the virtual addresses |
+| `SAMBA_LETSENCRYPT` | `no` | `yes` obtains and renews the certificate and serves it on the virtual LDAP addresses |
 | `ACME_DOMAINS` | | Central names in the certificate, space-separated; the first becomes the common name. Not the host names of the domain controllers |
 | `ACME_EMAIL` | | Contact address of the Let's Encrypt account |
 | `ACME_SERVER` | Let's Encrypt | ACME directory; `https://acme-staging-v02.api.letsencrypt.org/directory` for a test |

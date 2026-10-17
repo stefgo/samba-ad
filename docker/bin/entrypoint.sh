@@ -35,7 +35,7 @@ write_configs() {
   # Where Samba's certificate comes from: none (Samba generates one) or own.
   # Samba insists on a private key that only root can read, so the mounted
   # files are copied instead of being used in place. The Let's Encrypt
-  # certificate is haproxy's, for the virtual addresses only.
+  # certificate is haproxy's, for the virtual LDAP addresses only.
   TLS_SOURCE=none
   rm -rf /etc/samba/tls
   if [ -f /tls/cert.pem ]; then
@@ -58,7 +58,7 @@ write_configs() {
   if [ "$SAMBA_LETSENCRYPT" == yes ]; then
     letsencrypt.sh install
   fi
-  if [ -n "$SAMBA_VIRTUAL_ADDRESSES" ]; then
+  if [ -n "$SAMBA_LDAP_VIRTUAL_ADDRESSES" ]; then
     render haproxy.cfg.j2 /etc/haproxy/haproxy.cfg
   fi
   # BIND runs as user bind and keeps its session key here
@@ -76,7 +76,7 @@ write_configs() {
   fi
   output=$(named-checkconf /etc/bind/named.conf 2>&1) ||
     fail "BIND rejects the generated named.conf:" "$output"
-  if [ -n "$SAMBA_VIRTUAL_ADDRESSES" ]; then
+  if [ -n "$SAMBA_LDAP_VIRTUAL_ADDRESSES" ]; then
     output=$(haproxy -c -q -f /etc/haproxy/haproxy.cfg 2>&1) ||
       fail "haproxy rejects the generated haproxy.cfg:" "$output"
   fi
@@ -104,7 +104,7 @@ write_programs() {
     } >> "$file"
   fi
 
-  if [ -n "$SAMBA_VIRTUAL_ADDRESSES" ]; then
+  if [ -n "$SAMBA_LDAP_VIRTUAL_ADDRESSES" ]; then
     cat "$TEMPLATES/vip-proxy.conf" >> "$file"
   fi
 

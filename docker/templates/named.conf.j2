@@ -7,12 +7,12 @@ options {
     directory "/var/cache/bind";
 
     // 127.0.0.1 for local checks (e.g. keepalived), the host address and
-    // the virtual addresses. An address that is not on an interface yet is
-    // picked up as soon as it appears.
+    // SAMBA_DNS_VIRTUAL_ADDRESSES. An address that is not on an interface
+    // yet is picked up as soon as it appears.
     listen-on {
         127.0.0.1;
         {{ SAMBA_HOST_ADDRESS }};
-{% for address in SAMBA_VIRTUAL_ADDRESSES.split() %}
+{% for address in SAMBA_DNS_VIRTUAL_ADDRESSES.split() %}
         {{ address }};
 {% endfor %}
     };
