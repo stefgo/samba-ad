@@ -1,9 +1,14 @@
 #!/bin/bash
-# Health check of the container: supervisord reports BIND and Samba as
-# running, and DNS and the main services of Samba answer on the host address.
-# Docker shows the output with "docker inspect".
+# Health check of the container: supervisord reports BIND and Samba (and
+# haproxy with Let's Encrypt) as running, and DNS and the main services of
+# Samba answer on the host address. Docker shows the output with "docker
+# inspect".
 
-status=$(supervisorctl status bind samba 2>&1)
+programs=(bind samba)
+if [ "${SAMBA_LETSENCRYPT:-no}" == yes ]; then
+  programs+=(vip-proxy)
+fi
+status=$(supervisorctl status "${programs[@]}" 2>&1)
 starting=$(awk '$2 != "RUNNING" {print $1 " is " $2}' <<< "$status")
 if [ -n "$starting" ]; then
   echo "${starting//$'\n'/, }"

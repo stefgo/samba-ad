@@ -1,24 +1,27 @@
 #!/bin/bash -e
 #
-# The Let's Encrypt certificate of Samba's LDAP server (LDAPS and StartTLS).
+# The Let's Encrypt certificate of the virtual addresses. haproxy serves it
+# for LDAPS on SAMBA_VIRTUAL_ADDRESSES; Samba keeps its own certificate for
+# the host names and never sees this one.
 #
-#   letsencrypt.sh install  Copy the certificate to /etc/samba/tls; until one
-#                           is issued, a temporary self-signed one for the
-#                           same names. Run by entrypoint.sh before Samba.
+#   letsencrypt.sh install  Write the certificate for haproxy; until one is
+#                           issued, a temporary self-signed one for the same
+#                           names. Run by entrypoint.sh before haproxy.
 #   letsencrypt.sh run      Obtain, renew and keep the names in line with
 #                           ACME_DOMAINS, for as long as the container runs.
 #                           A program of supervisord.
 #   letsencrypt.sh deploy   certbot's deploy hook: install the new certificate
-#                           and have Samba load it, without a restart.
+#                           and have haproxy load it, without a restart.
 #
-# The DNS-01 challenge is answered through Cloudflare's API. Samba never waits
-# for any of this: it starts with what /etc/samba/tls holds.
+# The DNS-01 challenge is answered through Cloudflare's API. haproxy never
+# waits for any of this: it starts with what $CERTIFICATE holds.
 
 ACME_DIR=/var/lib/acme
 LINEAGE=samba
 LIVE=$ACME_DIR/live/$LINEAGE
 CREDENTIALS=/run/letsencrypt/cloudflare.ini
-TLS_DIR=/etc/samba/tls
+# haproxy wants certificate, chain and key in one file
+CERTIFICATE=/etc/haproxy/certs/vip.pem
 
 # How long to wait between rounds once a round succeeded, and the longest
 # wait after one that failed
@@ -32,40 +35,42 @@ log() {
 }
 
 install_certificate() {
-  # /etc/samba exists, so -m applies to the only directory that is created
+  local dir=${CERTIFICATE%/*} temp
+  # /etc/haproxy exists, so -m applies to the only directory that is created
   # shellcheck disable=SC2174
-  mkdir -p -m 700 "$TLS_DIR"
+  mkdir -p -m 700 "$dir"
+  temp=$(mktemp "$dir/.vip.XXXXXX")
   if [ -f "$LIVE/fullchain.pem" ]; then
-    # Samba insists on a private key that only root can read
-    install -m 644 "$LIVE/fullchain.pem" "$TLS_DIR/cert.pem"
-    install -m 600 "$LIVE/privkey.pem" "$TLS_DIR/key.pem"
+    cat "$LIVE/fullchain.pem" "$LIVE/privkey.pem" > "$temp"
     log "Using the Let's Encrypt certificate for $ACME_DOMAINS"
   else
-    # Samba's own certificate lives elsewhere and smb.conf names this
-    # directory, so the time until the first issue is bridged here
-    local san=
+    local san='' key
     for name in $ACME_DOMAINS; do
       san+="${san:+,}DNS:$name"
     done
+    key=$(mktemp)
     openssl req -x509 -newkey rsa:2048 -noenc -days 30 -sha256 \
       -subj "/CN=${ACME_DOMAINS%% *}" -addext "subjectAltName=$san" \
-      -keyout "$TLS_DIR/key.pem" -out "$TLS_DIR/cert.pem" 2>/dev/null
-    chmod 600 "$TLS_DIR/key.pem"
+      -keyout "$key" -out "$temp" 2>/dev/null
+    cat "$key" >> "$temp"
+    rm -f "$key"
     log "No Let's Encrypt certificate yet: using a temporary self-signed" \
       "one until it is issued"
   fi
+  # Replaced in one step, so that haproxy never reads half a file
+  mv "$temp" "$CERTIFICATE"
 }
 
-reload_samba() {
-  # The LDAP server may still be starting when the first certificate arrives
+reload_proxy() {
+  # haproxy may still be starting when the first certificate arrives
   for _ in 1 2 3 4 5 6; do
-    if smbcontrol ldap_server reload-certs >/dev/null 2>&1; then
-      log "Samba's LDAP server loaded the new certificate"
+    if supervisorctl signal USR2 vip-proxy >/dev/null 2>&1; then
+      log "haproxy loaded the new certificate"
       return 0
     fi
     sleep 10
   done
-  log "Samba's LDAP server could not be told to load the new certificate;" \
+  log "haproxy could not be told to load the new certificate;" \
     "it takes effect with the next restart of the container"
 }
 
@@ -121,7 +126,7 @@ case "${1:-}" in
   run) run ;;
   deploy)
     install_certificate
-    reload_samba
+    reload_proxy
     ;;
   *)
     echo "Usage: $0 install|run|deploy" >&2

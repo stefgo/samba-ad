@@ -1,6 +1,6 @@
 {# Template of /etc/samba/smb.conf, written by entrypoint.sh at every start.
    The names are the settings of .env, as completed by load_settings in
-   common.sh, and TLS_SOURCE from entrypoint.sh. #}
+   common.sh, and TLS_SOURCE (none or own) from entrypoint.sh. #}
 # Written by the container at every start; changes here are lost.
 # Own settings go into *.conf files below /etc/samba/conf.d (volume
 # samba-dc-etc); they are included at the end of [global] and win.
@@ -25,15 +25,9 @@
 	# Kerberos FAST is off, as in every earlier version of this image; the
 	# reason is not recorded. "kdc enable fast = yes" in conf.d turns it on.
 	kdc enable fast = no
-{% if TLS_SOURCE == "letsencrypt" %}
-
-	# Certificate from Let's Encrypt (SAMBA_LETSENCRYPT); the chain is part
-	# of the certfile
-	tls enabled = yes
-	tls certfile = /etc/samba/tls/cert.pem
-	tls keyfile = /etc/samba/tls/key.pem
-	tls cafile =
-{% elif TLS_SOURCE == "own" %}
+{# The Let's Encrypt certificate is not Samba's: haproxy serves it on the
+   virtual addresses (haproxy.cfg.j2) #}
+{% if TLS_SOURCE == "own" %}
 
 	# Own certificate from tls/
 	tls enabled = yes

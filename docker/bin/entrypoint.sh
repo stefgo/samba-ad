@@ -32,15 +32,13 @@ write_configs() {
   # Samba's DLZ module that matches the installed BIND
   DLZ_MODULE=$(dlz_module)
 
-  # Where the certificate comes from: none (Samba generates one),
-  # letsencrypt or own. Samba insists on a private key that only root can
-  # read, so the mounted files are copied instead of being used in place.
+  # Where Samba's certificate comes from: none (Samba generates one) or own.
+  # Samba insists on a private key that only root can read, so the mounted
+  # files are copied instead of being used in place. The Let's Encrypt
+  # certificate is haproxy's, for the virtual addresses only.
   TLS_SOURCE=none
   rm -rf /etc/samba/tls
-  if [ "$SAMBA_LETSENCRYPT" == yes ]; then
-    letsencrypt.sh install
-    TLS_SOURCE=letsencrypt
-  elif [ -f /tls/cert.pem ]; then
+  if [ -f /tls/cert.pem ]; then
     mkdir -m 700 /etc/samba/tls
     install -m 644 /tls/cert.pem /etc/samba/tls/cert.pem
     install -m 600 /tls/key.pem /etc/samba/tls/key.pem
@@ -57,6 +55,10 @@ write_configs() {
 
   render named.conf.j2 /etc/bind/named.conf
   render smb.conf.j2 /etc/samba/smb.conf
+  if [ "$SAMBA_LETSENCRYPT" == yes ]; then
+    letsencrypt.sh install
+    render haproxy.cfg.j2 /etc/haproxy/haproxy.cfg
+  fi
   # BIND runs as user bind and keeps its session key here
   install -d -o bind -g bind /run/named
 
@@ -72,6 +74,10 @@ write_configs() {
   fi
   output=$(named-checkconf /etc/bind/named.conf 2>&1) ||
     fail "BIND rejects the generated named.conf:" "$output"
+  if [ "$SAMBA_LETSENCRYPT" == yes ]; then
+    output=$(haproxy -c -q -f /etc/haproxy/haproxy.cfg 2>&1) ||
+      fail "haproxy rejects the generated haproxy.cfg:" "$output"
+  fi
 }
 
 # The optional programs of supervisord, in one file that always exists
@@ -106,7 +112,7 @@ write_programs() {
     fi
     mkdir -m 700 /run/letsencrypt
     (umask 077; echo "dns_cloudflare_api_token = $token" > /run/letsencrypt/cloudflare.ini)
-    cat "$TEMPLATES/letsencrypt.conf" >> "$file"
+    cat "$TEMPLATES/vip-proxy.conf" "$TEMPLATES/letsencrypt.conf" >> "$file"
   fi
   unset CLOUDFLARE_DNS_API_TOKEN CLOUDFLARE_DNS_API_TOKEN_FILE
 }

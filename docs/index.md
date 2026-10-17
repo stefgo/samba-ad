@@ -13,7 +13,7 @@ Server; users, groups and group policies are managed with the usual tools
 - **Current components:** Debian with Samba from its backports. The image is
   rebuilt every week with the current packages.
 - **Optional:** a shared virtual address for several domain controllers
-  (VRRP), a certificate from Let's Encrypt for LDAPS, and the agent of
+  (VRRP) with a certificate from Let's Encrypt for LDAPS on it, and the agent of
   [Samba AD Manager](https://github.com/stefgo/samba-ad-manager).
 
 ## How it works
@@ -23,8 +23,9 @@ container samba-dc, on the network of the host
   supervisord
     ├─ BIND         port 53; the AD zones come from Samba's database (DLZ)
     ├─ Samba        Kerberos 88, LDAP 389/636, SMB 445, Global Catalog 3268, …
+    ├─ haproxy      optional, LDAP 389/636 on the virtual addresses
     ├─ SADM agent   optional
-    └─ certbot      optional, Let's Encrypt
+    └─ certbot      optional, Let's Encrypt for haproxy
   volume samba-dc-etc  →  /etc/samba
   volume samba-dc-lib  →  /var/lib/samba   (directory database, sysvol)
 ```
