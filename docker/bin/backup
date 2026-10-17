@@ -1,0 +1,40 @@
+#!/bin/bash
+#
+# Backs up the domain database, the sysvol and the configuration of this DC
+# with "samba-tool domain backup offline", while it is running. The archive
+# lands in /backup, which compose.yaml maps to ./backup on the host.
+#
+#   docker compose exec samba-dc backup [--keep <n>]
+#
+# --keep <n> deletes all but the newest n archives afterwards.
+
+set -euo pipefail
+
+TARGET=/backup
+keep=
+
+case "${1:-}" in
+  "") ;;
+  --keep)
+    [[ ${2:-} =~ ^[1-9][0-9]*$ ]] || { echo "Usage: backup [--keep <n>]" >&2; exit 2; }
+    keep=$2
+    ;;
+  *) echo "Usage: backup [--keep <n>]" >&2; exit 2 ;;
+esac
+
+[ -d "$TARGET" ] || { echo "ERROR: $TARGET is not mounted; see compose.yaml." >&2; exit 1; }
+
+# Lists every file it adds; only the result matters here
+samba-tool domain backup offline --targetdir="$TARGET" 2>&1 | grep -vE '^ +(adding|skipping) '
+archive=$(find "$TARGET" -maxdepth 1 -name 'samba-backup-*.tar.bz2' -printf '%T@ %p\n' |
+  sort -n | tail -n 1 | cut -d' ' -f2-)
+echo "Backup written: backup/${archive##*/} ($(du -h "$archive" | cut -f1))"
+
+if [ -n "$keep" ]; then
+  find "$TARGET" -maxdepth 1 -name 'samba-backup-*.tar.bz2' -printf '%T@ %p\n' |
+    sort -rn | tail -n +"$((keep + 1))" | cut -d' ' -f2- |
+    while read -r old; do
+      rm -f "$old"
+      echo "Deleted backup/${old##*/}"
+    done
+fi

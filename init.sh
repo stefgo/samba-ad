@@ -1,20 +1,31 @@
 #!/bin/bash
+#
+# Sets up this domain controller: a new domain (provision) or a further
+# domain controller of an existing one (join). Deletes an existing
+# installation of this host first, after asking.
+#
+#   ./init.sh provision|join
+#
+# The settings come from .env. For unattended runs, the password of the
+# domain administrator can be passed in ADMIN_PASSWORD.
+# Documentation: https://stefgo.github.io/samba-ad/installation/
+
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
 SERVICE=samba-dc
-VOLUMES=(samba-dc-etc samba-dc-lib samba-dc-bind)
+VOLUMES=(samba-dc-etc samba-dc-lib)
 
 usage() {
   cat <<EOF
 Usage: $0 provision|join
 
-  provision  Fully initialize a new domain
-  join       Initialize the installation and join an existing domain
-             (SAMBA_PEER_SERVER is used as DNS server)
+  provision  Create a new domain with this host as its first domain controller
+  join       Add this host as domain controller to an existing domain
+             (SAMBA_PEER_SERVER in .env)
 
-An already initialized installation is started with "docker compose up -d".
+A domain controller that is set up already is started with "docker compose up -d".
 EOF
 }
 
@@ -24,7 +35,7 @@ step() {
 }
 
 die() {
-  echo
+  echo >&2
   echo "ERROR: $1" >&2
   shift
   if [ $# -gt 0 ]; then
@@ -33,17 +44,13 @@ die() {
   exit 1
 }
 
-env_value() {
-  sed -n "s/^$1=//p" .env 2>/dev/null | tail -n 1 | tr -d "\"'"
-}
-
-# Value of a setting the way compose resolves it: environment, .env, default
-setting() {
-  local value=${!1:-}
-  if [ -z "$value" ]; then
-    value=$(env_value "$1")
-  fi
-  echo "${value:-${2:-}}"
+# yes_no <question> <default y|n>
+yes_no() {
+  local answer prompt="[y/N]"
+  if [ "$2" == y ]; then prompt="[Y/n]"; fi
+  read -r -p "$1 $prompt " answer
+  answer=${answer:-$2}
+  [[ $answer == [yYjJ]* ]]
 }
 
 # Samba's default policy: at least 7 characters from 3 character classes
@@ -63,108 +70,19 @@ case "$ACTION" in
   *) usage; exit 1 ;;
 esac
 
-step "Checking prerequisites"
+step "Checking Docker and .env"
 
 command -v docker >/dev/null ||
   die "The docker command was not found." "Install Docker first."
 docker compose version >/dev/null 2>&1 ||
   die "The Docker Compose plugin is not available."
 docker info >/dev/null 2>&1 ||
-  die "The Docker daemon is not reachable." \
-    "Is Docker running, and may this user access it?"
-
+  die "The Docker daemon is not reachable." "Is Docker running, and may this user access it?"
 [ -f .env ] ||
   die "The .env file is missing." "Create it with: cp .env.example .env"
-
-MISSING=()
-for NAME in SAMBA_HOST_NAME SAMBA_HOST_ADDRESS SAMBA_REALM SAMBA_INTERFACE; do
-  if [ -z "$(setting $NAME)" ]; then
-    MISSING+=("$NAME")
-  fi
-done
-if [ "$ACTION" == join ] && [ -z "$(setting SAMBA_PEER_SERVER)" ]; then
-  MISSING+=("SAMBA_PEER_SERVER (required for a join)")
-fi
-if [ ${#MISSING[@]} -gt 0 ]; then
-  die "These settings are missing in .env:" "${MISSING[@]}"
-fi
-
 docker compose config -q ||
   die "compose.yaml could not be evaluated - see the message above."
-
-HOST_NAME=$(setting SAMBA_HOST_NAME)
-HOST_ADDRESS=$(setting SAMBA_HOST_ADDRESS)
-REALM=$(setting SAMBA_REALM)
-DOMAIN=$(setting WORKGROUP HOME)
-PEER=$(setting SAMBA_PEER_SERVER)
-INTERFACES=$(setting SAMBA_INTERFACE)
-VIRTUAL_ADDRESSES=$(setting SAMBA_VIRTUAL_ADDRESS)
-BIND_INTERFACES_ONLY=$(setting SAMBA_BIND_INTERFACES_ONLY yes)
 IMAGE=$(docker compose config --images | head -n 1)
-
-# Samba registers every address of SAMBA_INTERFACE in DNS as address of this
-# DC. An interface name would include a virtual address while this host
-# holds it, so only fixed addresses are accepted.
-for ENTRY in $INTERFACES; do
-  [[ $ENTRY =~ ^[0-9A-Fa-f.:]+/[0-9]+$ ]] ||
-    die "SAMBA_INTERFACE entry '$ENTRY' is not of the form address/prefix." \
-      "List the fixed addresses of the host, e.g. 127.0.0.1/8 $HOST_ADDRESS/24"
-done
-
-case "$BIND_INTERFACES_ONLY" in
-  yes|no) ;;
-  *) die "SAMBA_BIND_INTERFACES_ONLY must be yes or no." ;;
-esac
-
-for VIP in $VIRTUAL_ADDRESSES; do
-  [[ $VIP =~ ^[0-9]+(\.[0-9]+){3}$ ]] ||
-    die "SAMBA_VIRTUAL_ADDRESS entry '$VIP' is not an IPv4 address." \
-      "List the addresses without prefix length."
-  [ "$VIP" != "$HOST_ADDRESS" ] ||
-    die "SAMBA_HOST_ADDRESS must be the fixed address of the host," \
-      "not the virtual address $VIP."
-  [ "$VIP" != "$PEER" ] ||
-    die "SAMBA_PEER_SERVER must be the fixed address of the peer," \
-      "not the virtual address $VIP."
-  for ENTRY in $(setting SAMBA_DNS_FORWARDER); do
-    [ "$VIP" != "$ENTRY" ] ||
-      die "The virtual address $VIP must not be used as DNS forwarder."
-  done
-  for ENTRY in $INTERFACES; do
-    [ "$VIP" != "${ENTRY%%/*}" ] ||
-      die "The virtual address $VIP must not be listed in SAMBA_INTERFACE." \
-        "Samba would register it in DNS as address of this DC."
-  done
-done
-
-if { [ -f tls/cert.pem ] && [ ! -f tls/key.pem ]; } ||
-    { [ ! -f tls/cert.pem ] && [ -f tls/key.pem ]; }; then
-  die "A custom certificate needs both tls/cert.pem and tls/key.pem."
-fi
-
-LETSENCRYPT=$(setting SAMBA_LETSENCRYPT no)
-ACME_DOMAINS=$(setting ACME_DOMAINS)
-case "$LETSENCRYPT" in
-  yes|no) ;;
-  *) die "SAMBA_LETSENCRYPT must be yes or no." ;;
-esac
-if [ "$LETSENCRYPT" == yes ]; then
-  [ ! -f tls/cert.pem ] ||
-    die "Let's Encrypt and a certificate in tls/ exclude each other." \
-      "Remove tls/cert.pem and tls/key.pem or set SAMBA_LETSENCRYPT=no."
-  [ -n "$ACME_DOMAINS" ] ||
-    die "ACME_DOMAINS is required with SAMBA_LETSENCRYPT=yes." \
-      "List the names applications reach LDAP and LDAPS under."
-  [ -n "$(setting ACME_EMAIL)" ] ||
-    die "ACME_EMAIL is required with SAMBA_LETSENCRYPT=yes."
-  [ -f acme.env ] ||
-    die "acme.env with the Cloudflare API token is missing." \
-      "Create it with: cp acme.env.example acme.env"
-  grep -qE '^CLOUDFLARE_DNS_API_TOKEN(_FILE)?=.+' acme.env ||
-    die "acme.env sets neither CLOUDFLARE_DNS_API_TOKEN nor" \
-      "CLOUDFLARE_DNS_API_TOKEN_FILE."
-fi
-
 echo "Docker, Compose and .env are fine."
 
 # The image is fetched before anything is deleted, so that a failed download
@@ -176,80 +94,62 @@ if docker pull "$IMAGE"; then
 elif docker image inspect "$IMAGE" >/dev/null 2>&1; then
   echo
   echo "NOTE: The image could not be downloaded (see the message above)."
-  echo "      A local copy exists and is used instead:"
-  docker image inspect -f '      created {{.Created}}, id {{.Id}}' "$IMAGE"
+  echo "      The local copy is used instead:"
+  docker image inspect -f '      created {{.Created}}' "$IMAGE"
 else
   die "The image $IMAGE could not be downloaded and no local copy exists." \
-    "Nothing has been changed; existing volumes are untouched." \
-    "" \
-    "Possible causes and remedies (see the docker message above):" \
-    "- Not logged in - the package is private. Log in with a personal" \
-    "  access token (read:packages):  docker login ${IMAGE%%/*}" \
-    "- No network connection or the registry is unreachable." \
-    "- Build the image locally instead:  docker compose build"
+    "Nothing has been changed." \
+    "Check the network connection, or build the image locally:" \
+    "  docker compose -f compose.yaml -f compose.build.yaml build"
 fi
 
-step "Planned initialization"
+step "Checking the settings"
 
-if [ "$ACTION" == provision ]; then
-  echo "Action:          provision - create a NEW domain"
-else
-  echo "Action:          join - add this host as DC to an EXISTING domain"
-fi
-echo "Realm:           $REALM"
-echo "NetBIOS domain:  $DOMAIN"
-echo "DC host name:    $HOST_NAME"
-echo "DC address:      $HOST_ADDRESS"
-echo "Virtual address: ${VIRTUAL_ADDRESSES:-none}"
-if [ "$BIND_INTERFACES_ONLY" == yes ]; then
-  echo "Samba listens:   on $INTERFACES"
-else
-  echo "Samba listens:   on every address of the host"
-fi
-if [ "$LETSENCRYPT" == yes ]; then
-  echo "TLS certificate: Let's Encrypt for $ACME_DOMAINS"
-elif [ -f tls/cert.pem ]; then
-  echo "TLS certificate: tls/cert.pem"
-else
-  echo "TLS certificate: self-signed, generated by Samba"
-fi
-if [ "$ACTION" == join ]; then
-  echo "Join partner:    $PEER (also DNS server during the join)"
-fi
-
+# Before the check, which creates missing volumes
 EXISTING=()
 for VOLUME in "${VOLUMES[@]}"; do
   if docker volume inspect "$VOLUME" >/dev/null 2>&1; then
     EXISTING+=("$VOLUME")
   fi
 done
+RUNNING=$(docker ps -q -f "name=^${SERVICE}\$")
+CHECK=(check "$ACTION")
+# The ports are still held by the running domain controller, which is
+# stopped below
+if [ -z "$RUNNING" ]; then
+  CHECK+=(--ports)
+fi
+docker compose run --rm --no-deps -T "$SERVICE" "${CHECK[@]}" ||
+  die "The settings are not usable - see the message above." "Nothing has been changed."
 
 echo
+if [ "$ACTION" == provision ]; then
+  echo "This creates a NEW domain with the settings above."
+else
+  echo "This adds this host as domain controller to the EXISTING domain above."
+fi
 if [ ${#EXISTING[@]} -gt 0 ]; then
-  echo "WARNING: An installation already exists. These volumes will be DELETED:"
-  printf '           %s\n' "${EXISTING[@]}"
-  if [ -n "$(docker ps -q -f "name=^${SERVICE}\$")" ]; then
+  echo "WARNING: This host is a domain controller already. Its volumes will be"
+  echo "         DELETED: ${EXISTING[*]}"
+  if [ -n "$RUNNING" ]; then
     echo "         The running container $SERVICE will be stopped."
   fi
-  echo "         The existing installation will be lost completely."
-else
-  echo "No existing volumes found - nothing will be deleted."
 fi
-read -r -p "Continue with '$ACTION'? [y/N] " ANSWER
-case "$ANSWER" in
-  y|Y|j|J) ;;
-  *) echo "Aborted. Nothing has been changed."; exit 1 ;;
-esac
+yes_no "Continue with '$ACTION'?" n || { echo "Aborted. Nothing has been changed."; exit 1; }
+
+SAVE=no
+if [ ${#EXISTING[@]} -gt 0 ] && yes_no "Save the existing volumes to backup/ first?" y; then
+  SAVE=yes
+fi
 
 step "Password of the domain administrator"
 
 if [ -n "${ADMIN_PASSWORD:-}" ]; then
   echo "Using the password from the ADMIN_PASSWORD environment variable."
 elif [ "$ACTION" == provision ]; then
-  echo "Choose the password for the account 'Administrator' of the new domain"
-  echo "$REALM. It needs at least 7 characters from three of these classes:"
-  echo "upper case, lower case, digits, special characters."
-  echo "The input is not displayed."
+  echo "Choose the password of the account 'Administrator' of the new domain."
+  echo "At least 7 characters from three of: upper case, lower case, digits,"
+  echo "special characters. The input is not displayed."
   while true; do
     read -r -s -p "New password: " ADMIN_PASSWORD
     echo
@@ -266,9 +166,8 @@ elif [ "$ACTION" == provision ]; then
   done
   unset REPEATED
 else
-  echo "Enter the password of the existing account 'Administrator' of the"
-  echo "domain $REALM. It is used to authenticate the join at $PEER."
-  echo "The input is not displayed."
+  echo "Enter the password of the account 'Administrator' of the existing"
+  echo "domain. The input is not displayed."
   while [ -z "${ADMIN_PASSWORD:-}" ]; do
     read -r -s -p "Password: " ADMIN_PASSWORD
     echo
@@ -276,9 +175,22 @@ else
 fi
 export ADMIN_PASSWORD
 
-if [ "$ACTION" == join ]; then
-  # During the join the container has to resolve the domain via the peer
-  export SAMBA_DNS_SERVER=$PEER
+if [ "$SAVE" == yes ]; then
+  step "Saving the existing volumes"
+  # Stopped, so that the databases are consistent
+  docker compose stop
+  mkdir -p backup
+  ARCHIVE=backup/volumes-$(date +%Y%m%d-%H%M%S).tar.gz
+  MOUNTS=()
+  for VOLUME in "${EXISTING[@]}"; do
+    MOUNTS+=(-v "$VOLUME:/volumes/$VOLUME:ro")
+  done
+  # Reading security.* xattrs (NT ACLs) needs SYS_ADMIN
+  docker run --rm --cap-add SYS_ADMIN "${MOUNTS[@]}" -v "$PWD/backup:/backup" \
+    --entrypoint tar "$IMAGE" --xattrs --xattrs-include='*' --warning=no-file-ignored -czf "/$ARCHIVE" -C /volumes . ||
+    die "The volumes could not be saved. Nothing has been deleted." \
+      "Start the domain controller again with: docker compose up -d"
+  echo "Saved to $ARCHIVE"
 fi
 
 step "Removing the old installation"
@@ -287,18 +199,47 @@ docker compose down -v
 step "Running 'samba-tool domain $ACTION' - this can take a few minutes"
 # ADMIN_PASSWORD is passed by name only, so it does not show up in the
 # process list
-if ! docker compose run --rm -e DOMAIN_ACTION="$ACTION" -e ADMIN_PASSWORD \
-    "$SERVICE" init; then
-  HINTS=("The output of samba-tool above shows the cause."
-    "The volumes are now incomplete; fix the cause and run"
-    "'$0 $ACTION' again.")
+if ! docker compose run --rm --no-deps -e ADMIN_PASSWORD "$SERVICE" "$ACTION"; then
+  HINTS=("The output above shows the cause. Fix it and run '$0 $ACTION' again;"
+    "the volumes are incomplete until then.")
   if [ "$ACTION" == join ]; then
-    HINTS+=("" "Common causes: wrong password, $PEER not reachable or not"
-      "a DC of $REALM, time difference to the peer of more than 5 minutes.")
+    HINTS+=("Common causes: wrong password, or the time of the hosts differs.")
   fi
-  die "The initialization failed." "${HINTS[@]}"
+  HINTS+=("See https://stefgo.github.io/samba-ad/troubleshooting/")
+  die "The setup failed." "${HINTS[@]}"
+fi
+unset ADMIN_PASSWORD
+
+step "Domain controller set up"
+
+if ! yes_no "Start it now?" y; then
+  echo "Start it with: docker compose up -d"
+  exit 0
+fi
+docker compose up -d
+echo "Waiting for the services to answer ..."
+for _ in $(seq 60); do
+  HEALTH=$(docker inspect -f '{{.State.Health.Status}}' "$SERVICE" 2>/dev/null || echo missing)
+  [ "$HEALTH" != starting ] && break
+  sleep 3
+done
+if [ "$HEALTH" != healthy ]; then
+  docker compose logs --tail 30 "$SERVICE"
+  die "The domain controller did not come up (state: $HEALTH)." \
+    "See the log above and https://stefgo.github.io/samba-ad/troubleshooting/"
 fi
 
-step "Initialization finished"
-echo "Start the domain controller:  docker compose up -d"
-echo "Follow the logs:              docker compose logs -f"
+step "Diagnosis"
+docker compose exec -T "$SERVICE" diagnose || true
+
+echo
+if [ "$ACTION" == join ]; then
+  cat <<EOF
+Next steps for a joined domain controller:
+- The sysvol is not replicated. Copy it from an existing DC, or create
+  missing group policy folders: docker compose exec $SERVICE restore-gpo-folders
+- See https://stefgo.github.io/samba-ad/installation/#after-a-join
+EOF
+else
+  echo "Next: https://stefgo.github.io/samba-ad/installation/#after-the-setup"
+fi

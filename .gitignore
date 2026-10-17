@@ -4,3 +4,6 @@
 .DS_Store
 acme.env
 letsencrypt/
+backup/
+# mkdocs build
+site/

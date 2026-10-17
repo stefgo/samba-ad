@@ -5,6 +5,7 @@
 # Non-empty variables in .env win over this file (SADM_SERVER_URL,
 # SADM_ALLOW_SELF_SIGNED). The agent may write serverUrl into this file
 # itself when the server registers it.
+# See https://stefgo.github.io/samba-ad/sadm-agent/
 # Reference: https://github.com/stefgo/samba-ad-manager/blob/main/docs/agent.md
 
 # URL of the SADM server the agent connects to. Unset: the server connects

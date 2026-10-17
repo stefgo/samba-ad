@@ -1,0 +1,201 @@
+#!/bin/bash
+#
+# Checks a running domain controller and says what to do about each problem.
+# Changes nothing.
+#
+#   docker compose exec samba-dc diagnose [--dbcheck]
+#
+# --dbcheck also checks the database (samba-tool dbcheck), which takes longer.
+# Exits with 1 if a check failed.
+
+set -uo pipefail
+
+# shellcheck source=docker/lib/common.sh
+. /usr/local/lib/samba-ad/common.sh
+load_settings
+
+failures=0
+warnings=0
+
+ok() {
+  echo "  [ ok ] $*"
+}
+
+# bad <message> [<hint>...], hints as for fail()
+bad() {
+  echo "  [FAIL] $1"
+  failures=$((failures + 1))
+  shift
+  hints "$@"
+}
+
+notice() {
+  echo "  [WARN] $1"
+  warnings=$((warnings + 1))
+  shift
+  hints "$@"
+}
+
+hints() {
+  local hint
+  for hint in "$@"; do
+    if [[ $hint == docs:* ]]; then
+      echo "         See $DOCS_URL/${hint#docs:}"
+    else
+      echo "         $hint"
+    fi
+  done
+}
+
+section() {
+  echo
+  echo "$*"
+}
+
+echo "Diagnosis of $NETBIOS_NAME ($FQDN), $(date '+%Y-%m-%d %H:%M:%S %Z')"
+versions | sed 's/^/  /'
+
+section "Programs"
+status=$(supervisorctl status 2>&1)
+programs=(bind samba)
+if [ "$SADM_AGENT" == yes ]; then programs+=(sadm-client); fi
+if [ "$SAMBA_LETSENCRYPT" == yes ]; then programs+=(letsencrypt); fi
+for program in "${programs[@]}"; do
+  state=$(awk -v p="$program" '$1 == p {print $2}' <<< "$status")
+  if [ "$state" == RUNNING ]; then
+    ok "$program is running"
+  else
+    bad "$program is ${state:-unknown}" \
+      "Its messages: docker compose logs samba-dc | grep -i $program" \
+      "docs:troubleshooting/#a-program-does-not-start"
+  fi
+done
+
+section "Network"
+for entry in "53 DNS" "88 Kerberos" "389 LDAP" "445 SMB" "636 LDAPS" "3268 Global Catalog"; do
+  port=${entry%% *}
+  if nc -z -w 3 "$SAMBA_HOST_ADDRESS" "$port" 2>/dev/null; then
+    ok "${entry#* } answers on $SAMBA_HOST_ADDRESS:$port"
+  else
+    bad "${entry#* } does not answer on $SAMBA_HOST_ADDRESS:$port" \
+      "Look for errors at the start in: docker compose logs samba-dc"
+  fi
+done
+for vip in $SAMBA_VIRTUAL_ADDRESSES; do
+  if host_address_entry "$vip" >/dev/null; then
+    ok "This host holds the virtual address $vip"
+  else
+    ok "The virtual address $vip is held by another host (or nobody)"
+  fi
+done
+
+section "DNS"
+dns() {
+  dig +short +time=3 +tries=1 @"$SAMBA_HOST_ADDRESS" "$@" 2>/dev/null
+}
+if [ -n "$(dns -t SRV "_ldap._tcp.$DNS_DOMAIN")" ]; then
+  ok "The domain's service records exist (_ldap._tcp.$DNS_DOMAIN)"
+else
+  bad "No service records for _ldap._tcp.$DNS_DOMAIN" \
+    "Samba could not update DNS. Run and read: docker compose exec samba-dc samba_dnsupdate --verbose" \
+    "docs:troubleshooting/#dns-records-are-missing"
+fi
+addresses=$(dns -t A "$FQDN" | sort | tr '\n' ' ')
+if [[ " $addresses" == *" $SAMBA_HOST_ADDRESS "* ]]; then
+  ok "$FQDN resolves to $addresses"
+else
+  bad "$FQDN resolves to '${addresses% }', not to $SAMBA_HOST_ADDRESS" \
+    "docs:troubleshooting/#dns-records-are-missing"
+fi
+domain_addresses=" $(dns -t A "$DNS_DOMAIN" | tr '\n' ' ')"
+for vip in $SAMBA_VIRTUAL_ADDRESSES; do
+  if [[ " $addresses $domain_addresses" == *" $vip "* ]]; then
+    bad "The virtual address $vip is registered in DNS as address of a DC" \
+      "Remove it: samba-tool dns delete <DC> $DNS_DOMAIN <name> A $vip -UAdministrator" \
+      "docs:virtual-address/"
+  fi
+done
+if [ "$SAMBA_DNS_ALLOW_RECURSION" != none ]; then
+  if [ -n "$(dns -t A www.debian.org)" ]; then
+    ok "Names outside the domain resolve (www.debian.org)"
+  else
+    notice "Names outside the domain do not resolve (www.debian.org)" \
+      "Without internet access set SAMBA_DNS_FORWARDERS to a DNS server of your network." \
+      "docs:troubleshooting/#external-names-do-not-resolve"
+  fi
+fi
+
+section "Directory"
+if output=$(samba-tool drs showrepl --summary 2>&1); then
+  ok "Replication: $(head -n 1 <<< "$output" | sed 's/^\[//; s/\]$//')"
+else
+  bad "Replication reports errors:" "${output//$'\n'/$'\n         '}" \
+    "docs:troubleshooting/#replication-fails"
+fi
+if [ -n "$SAMBA_PEER_SERVER" ]; then
+  if result=$(query_peer "$SAMBA_PEER_SERVER" 2>&1); then
+    offset=${result##* }
+    offset=${offset#-}
+    if [ "$offset" -lt 60 ]; then
+      ok "The clock is within $offset seconds of $SAMBA_PEER_SERVER"
+    elif [ "$offset" -lt 300 ]; then
+      notice "The clock differs by $offset seconds from $SAMBA_PEER_SERVER" \
+        "Kerberos fails from 300 seconds on." "docs:troubleshooting/#clocks-differ"
+    else
+      bad "The clock differs by $offset seconds from $SAMBA_PEER_SERVER" \
+        "docs:troubleshooting/#clocks-differ"
+    fi
+  else
+    notice "The domain controller $SAMBA_PEER_SERVER (SAMBA_PEER_SERVER) does not answer on LDAP"
+  fi
+fi
+if missing=$(restore-gpo-folders --check 2>&1); then
+  ok "Every group policy has its folder in the sysvol"
+else
+  bad "Group policies without a folder in the sysvol:" "${missing//$'\n'/$'\n         '}" \
+    "Create them with: docker compose exec samba-dc restore-gpo-folders --apply" \
+    "docs:operation/#missing-group-policy-folders"
+fi
+if [ "${1:-}" == --dbcheck ]; then
+  if output=$(samba-tool dbcheck 2>&1); then
+    ok "Database check: $(tail -n 1 <<< "$output")"
+  else
+    bad "The database check found errors:" "${output//$'\n'/$'\n         '}" \
+      "docs:troubleshooting/#the-database-check-finds-errors"
+  fi
+fi
+
+section "TLS certificate"
+cert=/etc/samba/tls/cert.pem
+if [ ! -f "$cert" ]; then
+  cert=/var/lib/samba/private/tls/cert.pem
+fi
+if [ -f "$cert" ]; then
+  subject=$(openssl x509 -in "$cert" -noout -subject -nameopt RFC2253 | sed 's/^subject=//')
+  names=$(openssl x509 -in "$cert" -noout -ext subjectAltName 2>/dev/null | tail -n +2 | tr -d ' ')
+  end=$(openssl x509 -in "$cert" -noout -enddate | cut -d= -f2)
+  if ! openssl x509 -in "$cert" -noout -checkend 0 >/dev/null; then
+    bad "The certificate expired on $end ($subject)" "docs:tls/"
+  elif ! openssl x509 -in "$cert" -noout -checkend $((14 * 86400)) >/dev/null; then
+    notice "The certificate expires on $end ($subject)" "docs:tls/"
+  else
+    ok "Certificate for ${names:-$subject}, valid until $end"
+  fi
+else
+  notice "No certificate found; LDAPS is not available"
+fi
+
+section "Storage"
+usage=$(df --output=pcent /var/lib/samba | tail -n 1 | tr -dc '0-9')
+if [ "$usage" -ge 90 ]; then
+  bad "The volume of /var/lib/samba is $usage% full"
+else
+  ok "The volume of /var/lib/samba is $usage% full"
+fi
+
+echo
+if [ $failures -gt 0 ]; then
+  echo "$failures check(s) failed, $warnings warning(s)."
+  exit 1
+fi
+echo "All checks passed, $warnings warning(s)."
