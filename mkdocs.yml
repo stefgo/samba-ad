@@ -1,0 +1,55 @@
+site_name: samba-ad
+site_description: Samba Active Directory domain controller in a Docker container
+site_url: https://stefgo.github.io/samba-ad/
+repo_url: https://github.com/stefgo/samba-ad
+repo_name: stefgo/samba-ad
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - navigation.footer
+    - navigation.sections
+    - search.highlight
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Light mode
+
+# --strict turns these into errors: broken links and anchors fail the build
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Overview: index.md
+  - Installation: installation.md
+  - Configuration: configuration.md
+  - Operation: operation.md
+  - Troubleshooting: troubleshooting.md
+  - Optional features:
+      - Virtual address: virtual-address.md
+      - TLS certificates: tls.md
+      - SADM agent: sadm-agent.md
+  - Development: development.md
