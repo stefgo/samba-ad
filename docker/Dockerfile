@@ -28,8 +28,9 @@ RUN echo "deb http://deb.debian.org/debian ${DEBIAN_RELEASE}-backports main" \
     # Samba with its Python modules (the SADM agent and the scripts use them)
  && apt-get install -y -t "${DEBIAN_RELEASE}-backports" samba samba-ad-dc \
       samba-ad-provision samba-client winbind python3-samba \
-    # Optional Let's Encrypt certificate; lego in Debian lacks Cloudflare
- && apt-get install -y certbot python3-certbot-dns-cloudflare openssl \
+    # Optional Let's Encrypt certificate on the virtual addresses, served by
+    # haproxy; lego in Debian lacks Cloudflare
+ && apt-get install -y certbot python3-certbot-dns-cloudflare openssl haproxy \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
 
@@ -43,7 +44,7 @@ VOLUME /etc/samba /var/lib/samba
 # entrypoint.sh starts it only with SADM_AGENT=yes.
 COPY --from=sadm-client /opt/sadm-client /opt/sadm-client
 
-COPY templates/ supervisor/letsencrypt.conf /usr/local/share/samba-ad/
+COPY templates/ supervisor/letsencrypt.conf supervisor/vip-proxy.conf /usr/local/share/samba-ad/
 COPY supervisor/supervisord.conf /etc/supervisor/supervisord.conf
 COPY --chmod=0755 lib/ /usr/local/lib/samba-ad/
 COPY --chmod=0755 bin/ /usr/local/bin/

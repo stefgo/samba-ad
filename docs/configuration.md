@@ -40,7 +40,7 @@ The name of the domain controller is the host name of the host.
 | Setting | Default | Meaning |
 |---|---|---|
 | `SAMBA_INTERFACES` | `127.0.0.1/8` and `SAMBA_HOST_ADDRESS` with its prefix | Addresses Samba uses and registers in DNS, with prefix length. Fixed addresses only, no interface names |
-| `SAMBA_BIND_INTERFACES_ONLY` | `yes` | `no` lets Samba listen on every address of the host, e.g. for LDAP on a [virtual address](virtual-address.md#central-ldap-names) |
+| `SAMBA_BIND_INTERFACES_ONLY` | `yes` | `no` lets Samba listen on every address of the host, e.g. for LDAP on a [virtual address](virtual-address.md#without-lets-encrypt) without Let's Encrypt. With `SAMBA_LETSENCRYPT=yes` it must stay `yes` |
 | `SAMBA_VIRTUAL_ADDRESSES` | none | [Virtual addresses](virtual-address.md) BIND answers on as well |
 
 ### Let's Encrypt and SADM agent

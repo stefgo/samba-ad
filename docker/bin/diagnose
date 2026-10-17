@@ -59,7 +59,7 @@ section "Programs"
 status=$(supervisorctl status 2>&1)
 programs=(bind samba)
 if [ "$SADM_AGENT" == yes ]; then programs+=(sadm-client); fi
-if [ "$SAMBA_LETSENCRYPT" == yes ]; then programs+=(letsencrypt); fi
+if [ "$SAMBA_LETSENCRYPT" == yes ]; then programs+=(vip-proxy letsencrypt); fi
 for program in "${programs[@]}"; do
   state=$(awk -v p="$program" '$1 == p {print $2}' <<< "$status")
   if [ "$state" == RUNNING ]; then
@@ -86,6 +86,15 @@ done
 for vip in $SAMBA_VIRTUAL_ADDRESSES; do
   if host_address_entry "$vip" >/dev/null; then
     ok "This host holds the virtual address $vip"
+    if [ "$SAMBA_LETSENCRYPT" == yes ]; then
+      if nc -z -w 3 "$vip" 636 2>/dev/null; then
+        ok "LDAPS (haproxy) answers on $vip:636"
+      else
+        bad "LDAPS (haproxy) does not answer on $vip:636" \
+          "Its messages: docker compose logs samba-dc | grep -i haproxy" \
+          "docs:virtual-address/#central-ldap-names"
+      fi
+    fi
   else
     ok "The virtual address $vip is held by another host (or nobody)"
   fi
@@ -167,24 +176,38 @@ if [ "${1:-}" == --dbcheck ]; then
   fi
 fi
 
-section "TLS certificate"
+# check_certificate <label> <file>
+check_certificate() {
+  local label=$1 cert=$2 subject names end
+  subject=$(openssl x509 -in "$cert" -noout -subject -nameopt RFC2253 | sed 's/^subject=//')
+  names=$(openssl x509 -in "$cert" -noout -ext subjectAltName 2>/dev/null | tail -n +2 | tr -d ' ')
+  end=$(openssl x509 -in "$cert" -noout -enddate | cut -d= -f2)
+  if ! openssl x509 -in "$cert" -noout -checkend 0 >/dev/null; then
+    bad "$label expired on $end ($subject)" "docs:tls/"
+  elif ! openssl x509 -in "$cert" -noout -checkend $((14 * 86400)) >/dev/null; then
+    notice "$label expires on $end ($subject)" "docs:tls/"
+  else
+    ok "$label for ${names:-$subject}, valid until $end"
+  fi
+}
+
+section "TLS certificates"
 cert=/etc/samba/tls/cert.pem
 if [ ! -f "$cert" ]; then
   cert=/var/lib/samba/private/tls/cert.pem
 fi
 if [ -f "$cert" ]; then
-  subject=$(openssl x509 -in "$cert" -noout -subject -nameopt RFC2253 | sed 's/^subject=//')
-  names=$(openssl x509 -in "$cert" -noout -ext subjectAltName 2>/dev/null | tail -n +2 | tr -d ' ')
-  end=$(openssl x509 -in "$cert" -noout -enddate | cut -d= -f2)
-  if ! openssl x509 -in "$cert" -noout -checkend 0 >/dev/null; then
-    bad "The certificate expired on $end ($subject)" "docs:tls/"
-  elif ! openssl x509 -in "$cert" -noout -checkend $((14 * 86400)) >/dev/null; then
-    notice "The certificate expires on $end ($subject)" "docs:tls/"
-  else
-    ok "Certificate for ${names:-$subject}, valid until $end"
-  fi
+  check_certificate "Samba's certificate" "$cert"
 else
-  notice "No certificate found; LDAPS is not available"
+  notice "Samba has no certificate; LDAPS is not available"
+fi
+if [ "$SAMBA_LETSENCRYPT" == yes ]; then
+  if [ -f /etc/haproxy/certs/vip.pem ]; then
+    check_certificate "The certificate of the virtual addresses" /etc/haproxy/certs/vip.pem
+  else
+    bad "haproxy has no certificate for the virtual addresses" \
+      "Its messages: docker compose logs samba-dc | grep letsencrypt" "docs:tls/#lets-encrypt"
+  fi
 fi
 
 section "Storage"

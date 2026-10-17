@@ -1,0 +1,49 @@
+{# Template of /etc/haproxy/haproxy.cfg, written by entrypoint.sh at every
+   start with SAMBA_LETSENCRYPT=yes. The names are the settings of .env, as
+   completed by load_settings in common.sh. letsencrypt.sh writes the
+   certificate. #}
+# Written by the container at every start; changes here are lost.
+#
+# LDAP on the virtual addresses. Samba serves one certificate only, its own
+# for the host names; LDAPS on a virtual address gets the Let's Encrypt
+# certificate from here and is passed on to Samba over TLS, so that Samba
+# still sees an encrypted connection.
+
+global
+	log stdout format raw local0
+	user haproxy
+	group haproxy
+	# Samba's own certificate is self-signed or from an own CA
+	ssl-server-verify none
+
+defaults
+	mode tcp
+	log global
+	# One line per connection: Samba sees the host address as the client of
+	# every connection through here, the log keeps the real one
+	option tcplog
+	timeout connect 5s
+	# LDAP clients keep idle connections in their pools
+	timeout client 1h
+	timeout server 1h
+
+frontend ldaps
+	# transparent: also binds a virtual address this host does not hold
+	# (IP_FREEBIND), so haproxy need not wait for keepalived
+{% for vip in SAMBA_VIRTUAL_ADDRESSES.split() %}
+	bind {{ vip }}:636 transparent ssl crt /etc/haproxy/certs/vip.pem
+{% endfor %}
+	default_backend samba-ldaps
+
+# StartTLS cannot be handled here; it reaches Samba and its own certificate
+frontend ldap
+{% for vip in SAMBA_VIRTUAL_ADDRESSES.split() %}
+	bind {{ vip }}:389 transparent
+{% endfor %}
+	default_backend samba-ldap
+
+backend samba-ldaps
+	server samba {{ SAMBA_HOST_ADDRESS }}:636 ssl
+
+backend samba-ldap
+	server samba {{ SAMBA_HOST_ADDRESS }}:389

@@ -6,11 +6,11 @@
 |---|---|
 | `compose.yaml`, `init.sh`, `.env.example`, `acme.env.example`, `sadm-config.yaml` | What a host needs |
 | `compose.build.yaml` | Builds the image locally instead of pulling it |
-| `docker/Dockerfile` | The image: Debian, Samba from backports, BIND, supervisord, certbot, SADM agent |
+| `docker/Dockerfile` | The image: Debian, Samba from backports, BIND, supervisord, certbot, haproxy, SADM agent |
 | `docker/bin/` | Commands of the image: `entrypoint.sh` (start, provision, join, check), `diagnose`, `backup`, `restore-gpo-folders`, `healthcheck`, `letsencrypt.sh` |
 | `docker/lib/common.sh` | Settings with their defaults, checks, messages |
 | `docker/lib/render-template` | Writes a file from a Jinja template |
-| `docker/templates/` | Jinja templates of `smb.conf` and `named.conf`, written at every start |
+| `docker/templates/` | Jinja templates of `smb.conf`, `named.conf` and `haproxy.cfg`, written at every start |
 | `docker/supervisor/` | Programs of supervisord |
 | `tests/smoke-test.sh` | Sets up a test domain with an image and checks it |
 | `docs/`, `mkdocs.yml` | This documentation |
