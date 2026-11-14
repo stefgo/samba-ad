@@ -4,6 +4,14 @@ A Samba Active Directory domain controller as a Docker container, with BIND 9
 as DNS server. Debian with Samba from its backports; the image is rebuilt
 every week with the current packages.
 
+The image contains the agent of
+[Samba AD Manager](https://github.com/stefgo/samba-ad-manager) (SADM), which
+watches domain controllers. Switched on with `SADM_AGENT=yes`, it reports what
+SADM cannot ask over the network: Samba's services, the programs of
+supervisord, free space, group policy versions in the sysvol and a read-only
+database check. It changes nothing on the domain controller; see
+[SADM agent](https://stefgo.github.io/samba-ad/sadm-agent/).
+
 **Documentation: https://stefgo.github.io/samba-ad/**
 
 ## Quick start
@@ -47,3 +55,6 @@ are licensed under the [MIT License](LICENSE).
 The image installs Samba, BIND 9, haproxy, certbot and other programs as
 Debian packages; each keeps its own license (Samba: GPLv3). Their license
 texts are in the image below `/usr/share/doc/<package>/copyright`.
+The SADM agent is copied into the image from `ghcr.io/stefgo/sadm-client`
+and is under the license of the
+[Samba AD Manager](https://github.com/stefgo/samba-ad-manager) project.
