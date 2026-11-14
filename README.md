@@ -38,3 +38,12 @@ docker compose pull && docker compose up -d   # update
 - [Development](https://stefgo.github.io/samba-ad/development/): layout, tests, releases
 
 The sources of the documentation are in [`docs/`](docs/).
+
+## License
+
+The files of this repository (Dockerfile, scripts, templates, documentation)
+are licensed under the [MIT License](LICENSE).
+
+The image installs Samba, BIND 9, haproxy, certbot and other programs as
+Debian packages; each keeps its own license (Samba: GPLv3). Their license
+texts are in the image below `/usr/share/doc/<package>/copyright`.
