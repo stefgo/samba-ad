@@ -53,6 +53,6 @@ documentation) are licensed under the
 The image installs Samba, BIND 9, haproxy, certbot and other programs as
 Debian packages; each keeps its own license (Samba: GPLv3). Their license
 texts are in the image below `/usr/share/doc/<package>/copyright`. The SADM
-agent is copied into the image from `ghcr.io/stefgo/sadm-client` and is under
-the license of the [Samba AD Manager](https://github.com/stefgo/samba-ad-manager)
-project.
+agent is copied into the image from `ghcr.io/stefgo/sadm-client`; it and
+[Samba AD Manager](https://github.com/stefgo/samba-ad-manager) are under the
+MIT License as well.

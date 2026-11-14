@@ -23,8 +23,8 @@ the health check: a domain controller whose agent is down keeps running.
 
 The agent is not built here: the image copies it from
 `ghcr.io/stefgo/sadm-client` (tag `SADM_CLIENT_TAG` in the Dockerfile, see
-[Development](development.md)). It belongs to the SADM project and is under
-that project's license, not under the MIT license of this repository.
+[Development](development.md)). It belongs to the SADM project, which is
+under the MIT License as well.
 
 ## Registering the agent
 
