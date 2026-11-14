@@ -41,3 +41,18 @@ replaced at any time, which is how an update works.
 - [Configuration](configuration.md): every setting of `.env`
 - [Operation](operation.md): logs, updates, backups
 - [Troubleshooting](troubleshooting.md): what an error message means and what to do
+- [SADM agent](sadm-agent.md): reports of the domain controller to
+  [Samba AD Manager](https://github.com/stefgo/samba-ad-manager)
+
+## License
+
+The files of the repository (Dockerfile, scripts, templates, this
+documentation) are licensed under the
+[MIT License](https://github.com/stefgo/samba-ad/blob/main/LICENSE).
+
+The image installs Samba, BIND 9, haproxy, certbot and other programs as
+Debian packages; each keeps its own license (Samba: GPLv3). Their license
+texts are in the image below `/usr/share/doc/<package>/copyright`. The SADM
+agent is copied into the image from `ghcr.io/stefgo/sadm-client` and is under
+the license of the [Samba AD Manager](https://github.com/stefgo/samba-ad-manager)
+project.

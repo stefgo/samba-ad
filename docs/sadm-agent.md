@@ -21,6 +21,11 @@ docker compose up -d
 It runs as a program of supervisord after BIND and Samba and is not part of
 the health check: a domain controller whose agent is down keeps running.
 
+The agent is not built here: the image copies it from
+`ghcr.io/stefgo/sadm-client` (tag `SADM_CLIENT_TAG` in the Dockerfile, see
+[Development](development.md)). It belongs to the SADM project and is under
+that project's license, not under the MIT license of this repository.
+
 ## Registering the agent
 
 Each agent is registered once, with "Add Agent" on the page of its domain

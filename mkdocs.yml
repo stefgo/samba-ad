@@ -3,6 +3,7 @@ site_description: Samba Active Directory domain controller in a Docker container
 site_url: https://stefgo.github.io/samba-ad/
 repo_url: https://github.com/stefgo/samba-ad
 repo_name: stefgo/samba-ad
+copyright: Copyright &copy; 2026 Stefan Götzl &middot; MIT License
 edit_uri: edit/main/docs/
 
 theme:
